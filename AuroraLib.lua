@@ -1,3 +1,4 @@
+cat > /home/claude/Aurora_modified.lua << 'ENDOFFILE'
 --!nocheck
 
 local TweenService = game:GetService("TweenService")
@@ -117,7 +118,6 @@ local Themes = {
 		Warning = Color3.fromRGB(255, 180, 80),
 		Danger = Color3.fromRGB(255, 90, 100),
 		Info = Color3.fromRGB(100, 180, 255),
-		-- Contrasting text color to use on top of Accent backgrounds
 		OnAccent = Color3.fromRGB(20, 20, 24),
 	},
 	Light = {
@@ -197,7 +197,6 @@ local Themes = {
 local function CloneTheme(Source)
 	local Out = {}
 	for K, V in pairs(Source) do Out[K] = V end
-	-- Ensure OnAccent always has a fallback derived from Background
 	if not Out.OnAccent then
 		Out.OnAccent = Out.Background or Color3.fromRGB(20, 20, 24)
 	end
@@ -256,9 +255,6 @@ local function TrackTween(Object, Property, T)
 	Map[Property] = T
 end
 
--- FIX 1: When doing a global theme update (PanelFilter = nil), skip entries that
--- belong to independently-themed panels (ThemeRef ~= nil). Those panels are handled
--- separately in their own ApplyThemeTween call with the correct merged theme.
 local function ApplyThemeTween(GlobalNewTheme, PanelFilter, PanelNewTheme)
 	for i = #ThemeRegistry, 1, -1 do
 		local Entry = ThemeRegistry[i]
@@ -268,13 +264,10 @@ local function ApplyThemeTween(GlobalNewTheme, PanelFilter, PanelNewTheme)
 		else
 			local Match = true
 			if PanelFilter ~= nil then
-				-- Panel-specific pass: only update entries owned by this panel
 				if Entry.ThemeRef ~= PanelFilter then
 					Match = false
 				end
 			else
-				-- Global pass: skip entries owned by any independent panel,
-				-- they will be handled by their own per-panel call
 				if Entry.ThemeRef ~= nil then
 					Match = false
 				end
@@ -487,6 +480,7 @@ Aurora._SavedConfig = {}
 Aurora._Visible = true
 Aurora._ToggleKey = Enum.KeyCode.LeftControl
 Aurora._Connections = {}
+Aurora._OverlayRoot = nil
 
 local Panel = {}
 Panel.__index = Panel
@@ -544,6 +538,21 @@ local function MakeDraggable(Frame, Handle, Panel)
 	end)
 end
 
+local function _UpdatePanelAutoHeight(Self)
+	if Self._Minimized or Self._Hidden then return end
+	if not Self._Body or not Self._Wrapper then return end
+	
+	local ContentH = Self._Body.AbsoluteCanvasSize.Y
+	
+	local TotalH = math.min(38 + ContentH + 22, Self._MaxAutoHeight)
+	TotalH = math.max(TotalH, Self._MinHeight + 10)
+
+	local CurrentW = Self._Wrapper.Size.X.Offset
+	local NewSize = UDim2.fromOffset(CurrentW, TotalH)
+	Self._FullSize = NewSize
+	Tween(Self._Wrapper, SpringFast, { Size = NewSize })
+end
+
 function Aurora:Init(Options)
 	if self._Initialized then return self end
 	Options = Options or {}
@@ -560,6 +569,14 @@ function Aurora:Init(Options)
 		IgnoreGuiInset = true,
 		DisplayOrder = 999,
 		Parent = GetMountParent(),
+	})
+	
+	self._OverlayRoot = Make("Frame", {
+		Name = "DropdownOverlay",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 200,
+		Parent = self._Screen,
 	})
 
 	self._NotifRoot = Make("Frame", {
@@ -725,7 +742,6 @@ function Aurora:SetTheme(Input)
 	self:_EnsureInit()
 	local NewTheme = ResolveTheme(Input, Theme)
 	for K, V in pairs(NewTheme) do Theme[K] = V end
-	-- Global pass: only touches entries with ThemeRef == nil (no independent panel)
 	ApplyThemeTween(NewTheme, nil, nil)
 	for _, Pnl in ipairs(self._Panels) do
 		if Pnl._OwnTheme and Pnl._ThemeDeltas then
@@ -733,7 +749,6 @@ function Aurora:SetTheme(Input)
 			for K, V in pairs(NewTheme) do Merged[K] = V end
 			for K, V in pairs(Pnl._ThemeDeltas) do Merged[K] = V end
 			Pnl._Theme = Merged
-			-- Panel pass: only touches entries with ThemeRef == Pnl
 			ApplyThemeTween(NewTheme, Pnl, Merged)
 		end
 	end
@@ -805,6 +820,7 @@ function Aurora:CreatePanel(Options)
 	Self._Minimized = false
 	Self._Hidden = false
 	Self._Sections = {}
+	Self._MaxAutoHeight = Self._DefaultSize.Y.Offset
 
 	local Saved = self._Layout[Self._Key]
 	if typeof(Saved) == "table" then
@@ -994,6 +1010,10 @@ function Aurora:CreatePanel(Options)
 	Self._Body = Body
 	Self._BodyWrap = BodyWrap
 	Self._Topbar = Topbar
+	
+	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+		_UpdatePanelAutoHeight(Self)
+	end)
 
 	MakeDraggable(Wrapper, Topbar, Self)
 
@@ -1156,18 +1176,11 @@ function Panel:AddSection(TitleOrOptions)
 	return Self
 end
 
--- FIX 2: HookHover now also tweens TextColor3 so text stays readable when the
--- background transitions to Accent. On hover we flip text to OnAccent (a dark
--- contrasting color); on leave we restore it to Theme.Text.
--- The optional TextObj parameter lets callers pass a separate text instance to
--- tween (e.g. a child TextLabel), otherwise we tween TextColor3 on Object itself.
 local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 	Property = Property or "BackgroundColor3"
 	if typeof(NormalKey) ~= "string" then NormalKey = ReverseLookupThemeKey(NormalKey) or "Elevated" end
 	if typeof(HoverKey) ~= "string" then HoverKey = ReverseLookupThemeKey(HoverKey) or "Accent" end
 
-	-- Only flip text color when hovering to an Accent-family background that
-	-- could clash with the normal text color.
 	local FlipsText = (HoverKey == "Accent" or HoverKey == "AccentHover")
 	local TextTarget = TextObj or Object
 
@@ -1334,7 +1347,6 @@ function Section:AddButton(Options)
 			TextYAlignment = Enum.TextYAlignment.Center,
 			Parent = Button,
 		})
-		-- When there's a separate label child, hook hover on label's TextColor3 too
 		HookHover(Button, "Elevated", "Accent", "BackgroundColor3", BtnLabel)
 	end
 
@@ -1582,6 +1594,25 @@ function Section:AddSlider(Options)
 	}
 end
 
+local _ActiveDropdown = nil
+
+local function _CloseActiveDropdown()
+	if _ActiveDropdown then
+		pcall(_ActiveDropdown.Close)
+		_ActiveDropdown = nil
+	end
+end
+
+local _DropdownDismissConn = nil
+local function _EnsureDropdownDismiss()
+	if _DropdownDismissConn then return end
+	_DropdownDismissConn = UserInputService.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			task.defer(_CloseActiveDropdown)
+		end
+	end)
+end
+
 function Section:AddDropdown(Options)
 	Options = Options or {}
 	local Multi = Options.Multi == true
@@ -1597,20 +1628,23 @@ function Section:AddDropdown(Options)
 		Selected = Options.Default or (Items[1])
 	end
 
+	_EnsureDropdownDismiss()
+	
 	local Container = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
-		ClipsDescendants = true,
+		ClipsDescendants = false,
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
 
 	local Header = Make("TextButton", {
 		BackgroundTransparency = 1,
-		Size = UDim2.new(1, 0, 0, 32),
+		Size = UDim2.new(1, 0, 1, 0),
 		FontFace = FontMedium,
 		Text = "",
+		ZIndex = 2,
 		Parent = Container,
 	})
 
@@ -1623,10 +1657,11 @@ function Section:AddDropdown(Options)
 		TextColor3 = Theme.Text,
 		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 2,
 		Parent = Header,
 	})
 
-	local Value = Make("TextLabel", {
+	local ValueLabel = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		AnchorPoint = Vector2.new(1, 0.5),
 		Position = UDim2.new(1, -28, 0.5, 0),
@@ -1637,6 +1672,7 @@ function Section:AddDropdown(Options)
 		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Right,
 		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 2,
 		Parent = Header,
 	})
 
@@ -1654,6 +1690,7 @@ function Section:AddDropdown(Options)
 			Result.IconFrame.AnchorPoint = Vector2.new(1, 0.5)
 			Result.IconFrame.Position = UDim2.new(1, -10, 0.5, 0)
 			Result.IconFrame.Size = UDim2.fromOffset(16, 16)
+			Result.IconFrame.ZIndex = 2
 			for _, Child in ipairs(Result.IconFrame:GetChildren()) do
 				if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
 					Child.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1674,19 +1711,36 @@ function Section:AddDropdown(Options)
 			Text = "v",
 			TextColor3 = Theme.TextDim,
 			TextSize = 11,
+			ZIndex = 2,
 			Parent = Header,
 		})
 	end
-
-	local List = Make("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 32),
-		Size = UDim2.new(1, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.Y,
-		Parent = Container,
+	
+	local OverlayMenu = Make("Frame", {
+		Name = "DropdownMenu",
+		BackgroundColor3 = Theme.Surface,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(200, 0),
+		Position = UDim2.fromOffset(0, 0),
+		Visible = false,
+		ZIndex = 200,
+		ClipsDescendants = true,
+		Parent = Aurora._OverlayRoot or (Aurora._Screen),
 	})
-	Padding(List, 0, 6, 6, 6)
-	ListLayout(List, 2)
+	Corner(OverlayMenu, 8)
+	Stroke(OverlayMenu, Theme.Border, 1, 0.2)
+	Make("UIPadding", {
+		Parent = OverlayMenu,
+		PaddingTop = UDim.new(0, 4),
+		PaddingBottom = UDim.new(0, 4),
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 4),
+	})
+	Make("UIListLayout", {
+		Parent = OverlayMenu,
+		Padding = UDim.new(0, 2),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	})
 
 	local Open = false
 	local Buttons = {}
@@ -1702,16 +1756,10 @@ function Section:AddDropdown(Options)
 		return tostring(Selected or "None")
 	end
 
-	-- FIX 3: UpdateButtons now tweens BOTH BackgroundColor3 AND TextColor3 so they
-	-- stay in sync. An optional Instant flag skips animation for the initial render
-	-- (called from Rebuild before buttons are visible), avoiding the janky flash
-	-- of white text on an un-transitioned Surface background.
 	local function UpdateButtons(Instant)
 		for Name, Btn in pairs(Buttons) do
 			local IsSel = Multi and (Selected[Name] == true) or (Selected == Name)
 			local TargetBg = IsSel and Theme.Accent or Theme.Surface
-			-- Use OnAccent for selected text so it contrasts against the Accent bg;
-			-- use TextDim for unselected items.
 			local TargetText = IsSel and Theme.OnAccent or Theme.TextDim
 			if Instant then
 				Btn.BackgroundColor3 = TargetBg
@@ -1720,11 +1768,21 @@ function Section:AddDropdown(Options)
 				Tween(Btn, SpringFast, { BackgroundColor3 = TargetBg, TextColor3 = TargetText })
 			end
 		end
-		Value.Text = DisplayText()
+		ValueLabel.Text = DisplayText()
+	end
+
+	local function CloseMenu()
+		if not Open then return end
+		Open = false
+		Tween(Arrow, Spring, { Rotation = 0 })
+		Tween(OverlayMenu, SpringFast, { Size = UDim2.fromOffset(OverlayMenu.Size.X.Offset, 0) })
+		task.delay(0.3, function()
+			if not Open then OverlayMenu.Visible = false end
+		end)
 	end
 
 	local function Rebuild()
-		for _, Child in ipairs(List:GetChildren()) do
+		for _, Child in ipairs(OverlayMenu:GetChildren()) do
 			if Child:IsA("TextButton") then Child:Destroy() end
 		end
 		Buttons = {}
@@ -1732,40 +1790,86 @@ function Section:AddDropdown(Options)
 			local Btn = Make("TextButton", {
 				BackgroundColor3 = Theme.Surface,
 				BorderSizePixel = 0,
-				Size = UDim2.new(1, 0, 0, 24),
+				Size = UDim2.new(1, 0, 0, 26),
 				FontFace = FontRegular,
 				Text = Name,
 				TextColor3 = Theme.TextDim,
 				TextSize = 12,
 				AutoButtonColor = false,
-				Parent = List,
+				ZIndex = 201,
+				Parent = OverlayMenu,
 			})
-			Corner(Btn, 4)
+			Corner(Btn, 5)
 			Buttons[Name] = Btn
 			Btn.MouseButton1Click:Connect(function()
 				if Multi then
 					Selected[Name] = not Selected[Name]
 				else
 					Selected = Name
+					CloseMenu()
+					_ActiveDropdown = nil
 				end
 				if Flag then Aurora.Flags[Flag] = Multi and Selected or Selected end
-				-- Animated update on user interaction
 				UpdateButtons(false)
 				SafeCall(Options.Callback, Multi and Selected or Selected)
 			end)
 		end
-		-- Instant on initial build so pre-selected items appear selected immediately
 		UpdateButtons(true)
 	end
 
-	local function SetOpen(State)
-		Open = State
-		local ContentHeight = 32 + (Open and (List.AbsoluteSize.Y + 6) or 0)
-		Tween(Container, Spring, { Size = UDim2.new(1, 0, 0, ContentHeight) })
-		Tween(Arrow, Spring, { Rotation = Open and 180 or 0 })
+	local function OpenMenu()
+		_CloseActiveDropdown()
+		Open = true
+		
+		local RowH = 26
+		local Gap = 2
+		local Pad = 8
+		local Rows = math.min(#Items, 8)
+		local TargetH = Rows * RowH + math.max(0, Rows - 1) * Gap + Pad
+		if #Items == 0 then TargetH = 32 end
+		
+		local AbsPos = Container.AbsolutePosition
+		local AbsSize = Container.AbsoluteSize
+		local MenuW = AbsSize.X
+		local ScreenH = Aurora._Screen.AbsoluteSize.Y
+		
+		local SpaceBelow = ScreenH - (AbsPos.Y + AbsSize.Y)
+		local PosY
+		if SpaceBelow >= TargetH + 4 then
+			PosY = AbsPos.Y + AbsSize.Y + 4
+		else
+			PosY = AbsPos.Y - TargetH - 4
+		end
+
+		OverlayMenu.Position = UDim2.fromOffset(AbsPos.X, PosY)
+		OverlayMenu.Size = UDim2.fromOffset(MenuW, 0)
+		OverlayMenu.Visible = true
+
+		Tween(Arrow, Spring, { Rotation = 180 })
+		Tween(OverlayMenu, Spring, { Size = UDim2.fromOffset(MenuW, TargetH) })
+
+		_ActiveDropdown = { Close = CloseMenu }
 	end
 
-	Header.MouseButton1Click:Connect(function() SetOpen(not Open) end)
+	Header.MouseButton1Click:Connect(function()
+		if Open then
+			CloseMenu()
+			_ActiveDropdown = nil
+		else
+			OpenMenu()
+		end
+	end)
+	
+	Header.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			
+		end
+	end)
+	OverlayMenu.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			
+		end
+	end)
 
 	local function Set(NewValue, FromLoad)
 		if Multi then
@@ -1779,7 +1883,6 @@ function Section:AddDropdown(Options)
 			Selected = NewValue
 		end
 		if Flag then Aurora.Flags[Flag] = Selected end
-		-- Instant on load, animated on user-driven Set calls
 		UpdateButtons(FromLoad == true)
 		if not FromLoad then SafeCall(Options.Callback, Selected) end
 	end
@@ -1790,9 +1893,6 @@ function Section:AddDropdown(Options)
 			Selected = Items[1]
 		end
 		Rebuild()
-		if Open then
-			task.delay(0.05, function() SetOpen(true) end)
-		end
 	end
 
 	Rebuild()
@@ -2340,6 +2440,146 @@ function Section:AddProgressBar(Options)
 		SetColor = function(_, C) SetColor(C) end,
 		SetText = function(_, T) SetText(T) end,
 		Instance = Container,
+	}
+end
+
+function Section:AddButtonBind(Options)
+	Options = Options or {}
+	local Key = Options.Default or Enum.KeyCode.E
+	local Flag = Options.Flag
+	local Listening = false
+
+	local Row = Make("Frame", {
+		BackgroundColor3 = Theme.Elevated,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 32),
+		ClipsDescendants = true,
+		Parent = self._Content,
+	})
+	Corner(Row, 6)
+	
+	local BtnRegion = Make("TextButton", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -84, 1, 0),
+		Text = "",
+		AutoButtonColor = false,
+		ZIndex = 2,
+		Parent = Row,
+	})
+	
+	local LabelX = 10
+	if Options.Icon and Icons then
+		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
+		if IconFrame then
+			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+			IconFrame.ZIndex = 3
+			LabelX = 30
+		end
+	end
+
+	local BtnLabel = Make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(LabelX, 0),
+		Size = UDim2.new(1, -84 - LabelX, 1, 0),
+		FontFace = FontMedium,
+		Text = Options.Text or "Action",
+		TextColor3 = Theme.Text,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 3,
+		Parent = Row,
+	})
+	
+	Make("Frame", {
+		BackgroundColor3 = Theme.BorderSoft,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -80, 0, 4),
+		Size = UDim2.fromOffset(1, 24),
+		ZIndex = 2,
+		Parent = Row,
+	})
+	
+	local KeyBtn = Make("TextButton", {
+		BackgroundColor3 = Theme.Surface,
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -8, 0.5, 0),
+		Size = UDim2.fromOffset(66, 22),
+		FontFace = FontBold,
+		Text = Key.Name,
+		TextColor3 = Theme.Text,
+		TextSize = 11,
+		AutoButtonColor = false,
+		ZIndex = 3,
+		Parent = Row,
+	})
+	Corner(KeyBtn, 4)
+	Stroke(KeyBtn, Theme.Border, 1, 0.3)
+	
+	BtnRegion.MouseEnter:Connect(function()
+		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Accent })
+		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.OnAccent })
+	end)
+	BtnRegion.MouseLeave:Connect(function()
+		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Elevated })
+		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.Text })
+	end)
+	
+	BtnRegion.MouseButton1Click:Connect(function()
+		local Ripple = Make("Frame", {
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.7,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(0, 0),
+			Parent = Row,
+		})
+		Corner(Ripple, 100)
+		Tween(Ripple, Spring, {
+			Size = UDim2.fromOffset(Row.AbsoluteSize.X * 2, Row.AbsoluteSize.X * 2),
+			BackgroundTransparency = 1,
+		})
+		task.delay(0.55, function() Ripple:Destroy() end)
+		SafeCall(Options.Callback, Key)
+	end)
+	
+	local function SetKey(NewKey, FromLoad)
+		Key = NewKey
+		KeyBtn.Text = Key.Name
+		if Flag then Aurora.Flags[Flag] = Key end
+		if not FromLoad then SafeCall(Options.Changed, Key) end
+	end
+
+	KeyBtn.MouseButton1Click:Connect(function()
+		if Listening then return end
+		Listening = true
+		KeyBtn.Text = "..."
+		KeyBtn.TextColor3 = Theme.Accent
+	end)
+
+	UserInputService.InputBegan:Connect(function(Input, Processed)
+		if Listening and Input.UserInputType == Enum.UserInputType.Keyboard then
+			Listening = false
+			KeyBtn.TextColor3 = Theme.Text
+			SetKey(Input.KeyCode)
+			return
+		end
+		if Processed then return end
+		if UserInputService:GetFocusedTextBox() then return end
+		if not Listening and Input.UserInputType == Enum.UserInputType.Keyboard and Input.KeyCode == Key then
+			SafeCall(Options.Callback, Key)
+		end
+	end)
+
+	BindFlag(Aurora, Flag, Key, SetKey)
+
+	return {
+		SetKey = function(_, K) SetKey(K) end,
+		GetKey = function() return Key end,
+		Instance = Row,
 	}
 end
 
