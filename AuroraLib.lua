@@ -6,7 +6,6 @@ local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
-local TextService = game:GetService("TextService")
 
 local FontId = "rbxassetid://12187365364"
 local HasFontNew = typeof(Font) == "table" or typeof(Font) == "userdata"
@@ -53,15 +52,6 @@ local function ApplyInter(Object, Weight)
 	else
 		pcall(function() Object.Font = Enum.Font.GothamMedium end)
 	end
-end
-
-local function MeasureText(Text, Size)
-	if not Text or Text == "" then return 0 end
-	local Ok, Bounds = pcall(function()
-		return TextService:GetTextSize(Text, Size or 12, Enum.Font.GothamMedium, Vector2.new(10000, 100))
-	end)
-	if Ok and Bounds then return Bounds.X end
-	return #Text * (Size or 12) * 0.55
 end
 
 local Icons
@@ -479,7 +469,7 @@ Aurora.__index = Aurora
 Aurora.Flags = {}
 Aurora.Theme = Theme
 Aurora.Themes = Themes
-Aurora.Version = "4.1.0"
+Aurora.Version = "4.0.0"
 
 Aurora._Initialized = false
 Aurora._Panels = {}
@@ -547,42 +537,17 @@ local function MakeDraggable(Frame, Handle, Panel)
 	end)
 end
 
-local function _RegisterContentWidth(Self, Width)
-	if not Self or not Width then return end
-	Self._ContentWidthRegistry = Self._ContentWidthRegistry or {}
-	table.insert(Self._ContentWidthRegistry, Width)
-	if Self._RequestAutoSize then Self._RequestAutoSize() end
-end
-
-local function _UpdatePanelAutoSize(Self)
+local function _UpdatePanelAutoHeight(Self)
 	if Self._Minimized or Self._Hidden then return end
 	if not Self._Body or not Self._Wrapper then return end
-
+	
 	local ContentH = Self._Body.AbsoluteCanvasSize.Y
-
-	local MaxChildW = 0
-	if Self._ContentWidthRegistry then
-		for _, W in ipairs(Self._ContentWidthRegistry) do
-			if typeof(W) == "function" then
-				local Ok, V = pcall(W)
-				if Ok and typeof(V) == "number" and V > MaxChildW then
-					MaxChildW = V
-				end
-			elseif typeof(W) == "number" and W > MaxChildW then
-				MaxChildW = W
-			end
-		end
-	end
-
-	local TitleW = MeasureText(Self._Title or "", 14) + 110
-
+	
 	local TotalH = math.min(38 + ContentH + 22, Self._MaxAutoHeight)
 	TotalH = math.max(TotalH, Self._MinHeight + 10)
 
-	local TargetW = math.max(MaxChildW + 24, TitleW, Self._MinWidth)
-	TargetW = math.min(TargetW, Self._MaxAutoWidth)
-
-	local NewSize = UDim2.fromOffset(TargetW, TotalH)
+	local CurrentW = Self._Wrapper.Size.X.Offset
+	local NewSize = UDim2.fromOffset(CurrentW, TotalH)
 	Self._FullSize = NewSize
 	Tween(Self._Wrapper, SpringFast, { Size = NewSize })
 end
@@ -604,7 +569,7 @@ function Aurora:Init(Options)
 		DisplayOrder = 999,
 		Parent = GetMountParent(),
 	})
-
+	
 	self._OverlayRoot = Make("Frame", {
 		Name = "DropdownOverlay",
 		BackgroundTransparency = 1,
@@ -855,8 +820,6 @@ function Aurora:CreatePanel(Options)
 	Self._Hidden = false
 	Self._Sections = {}
 	Self._MaxAutoHeight = Self._DefaultSize.Y.Offset
-	Self._MinWidth = Self._DefaultSize.X.Offset
-	Self._MaxAutoWidth = math.floor(Self._DefaultSize.X.Offset * 1.6)
 
 	local Saved = self._Layout[Self._Key]
 	if typeof(Saved) == "table" then
@@ -1033,7 +996,7 @@ function Aurora:CreatePanel(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 1),
 		CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.XY,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = Theme.Border,
 		ScrollBarImageTransparency = 0.3,
@@ -1046,7 +1009,7 @@ function Aurora:CreatePanel(Options)
 	Self._Body = Body
 	Self._BodyWrap = BodyWrap
 	Self._Topbar = Topbar
-
+	
 	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
 		_UpdatePanelAutoHeight(Self)
 	end)
@@ -1148,15 +1111,6 @@ function Panel:Show()
 		Tween(self._Wrapper, Spring, { Size = UDim2.fromOffset(self._FullSize.X.Offset, self._MinHeight) })
 	else
 		Tween(self._Wrapper, Spring, { Size = self._FullSize })
-	end
-	self:_PersistLayout()
-end
-
-function Panel:SetWidth(NewWidth)
-	local W = math.max(self._MinWidth, math.min(NewWidth, self._MaxAutoWidth))
-	self._FullSize = UDim2.fromOffset(W, self._FullSize.Y.Offset)
-	if not self._Hidden and not self._Minimized then
-		Tween(self._Wrapper, SpringFast, { Size = self._FullSize })
 	end
 	self:_PersistLayout()
 end
@@ -1272,7 +1226,6 @@ function Section:AddLabel(Options)
 	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 18),
-		AutomaticSize = Enum.AutomaticSize.X,
 		FontFace = FontRegular,
 		Text = Options.Text or "Label",
 		TextColor3 = Theme.TextDim,
@@ -1499,11 +1452,11 @@ function Section:AddToggle(Options)
 
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
-
+	
 	if Options.Default == true then
 		SafeCall(Options.Callback, true)
 	end
-
+	
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
@@ -1675,7 +1628,7 @@ function Section:AddDropdown(Options)
 	end
 
 	_EnsureDropdownDismiss()
-
+	
 	local Container = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
@@ -1761,7 +1714,7 @@ function Section:AddDropdown(Options)
 			Parent = Header,
 		})
 	end
-
+	
 	local OverlayMenu = Make("Frame", {
 		Name = "DropdownMenu",
 		BackgroundColor3 = Theme.Surface,
@@ -1866,19 +1819,19 @@ function Section:AddDropdown(Options)
 	local function OpenMenu()
 		_CloseActiveDropdown()
 		Open = true
-
+		
 		local RowH = 26
 		local Gap = 2
 		local Pad = 8
 		local Rows = math.min(#Items, 8)
 		local TargetH = Rows * RowH + math.max(0, Rows - 1) * Gap + Pad
 		if #Items == 0 then TargetH = 32 end
-
+		
 		local AbsPos = Container.AbsolutePosition
 		local AbsSize = Container.AbsoluteSize
 		local MenuW = AbsSize.X
 		local ScreenH = Aurora._Screen.AbsoluteSize.Y
-
+		
 		local SpaceBelow = ScreenH - (AbsPos.Y + AbsSize.Y)
 		local PosY
 		if SpaceBelow >= TargetH + 4 then
@@ -1903,6 +1856,17 @@ function Section:AddDropdown(Options)
 			_ActiveDropdown = nil
 		else
 			OpenMenu()
+		end
+	end)
+	
+	Header.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			
+		end
+	end)
+	OverlayMenu.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			
 		end
 	end)
 
@@ -1939,7 +1903,9 @@ function Section:AddDropdown(Options)
 		SetOptions = function(_, O) SetOptions(O) end,
 		Instance = Container,
 	}
-endfunction Section:AddKeybind(Options)
+end
+
+function Section:AddKeybind(Options)
 	Options = Options or {}
 	local Key = Options.Default or Enum.KeyCode.E
 	local Flag = Options.Flag
@@ -2295,7 +2261,9 @@ function Section:AddColorPicker(Options)
 		Get = function() return Value end,
 		Instance = Container,
 	}
-endfunction Section:AddProgressBar(Options)
+end
+
+function Section:AddProgressBar(Options)
 	Options = Options or {}
 	local Flag = Options.Flag
 	local Value = math.clamp(Options.Default or 0, 0, 1)
@@ -2488,7 +2456,7 @@ function Section:AddButtonBind(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
-
+	
 	local BtnRegion = Make("TextButton", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -84, 1, 0),
@@ -2497,7 +2465,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 2,
 		Parent = Row,
 	})
-
+	
 	local LabelX = 10
 	if Options.Icon and Icons then
 		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
@@ -2521,7 +2489,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 3,
 		Parent = Row,
 	})
-
+	
 	Make("Frame", {
 		BackgroundColor3 = Theme.BorderSoft,
 		BorderSizePixel = 0,
@@ -2531,7 +2499,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 2,
 		Parent = Row,
 	})
-
+	
 	local KeyBtn = Make("TextButton", {
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
@@ -2548,7 +2516,7 @@ function Section:AddButtonBind(Options)
 	})
 	Corner(KeyBtn, 4)
 	Stroke(KeyBtn, Theme.Border, 1, 0.3)
-
+	
 	BtnRegion.MouseEnter:Connect(function()
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Accent })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.OnAccent })
@@ -2557,7 +2525,7 @@ function Section:AddButtonBind(Options)
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Elevated })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.Text })
 	end)
-
+	
 	BtnRegion.MouseButton1Click:Connect(function()
 		local Ripple = Make("Frame", {
 			BackgroundColor3 = Color3.new(1, 1, 1),
@@ -2576,7 +2544,7 @@ function Section:AddButtonBind(Options)
 		task.delay(0.55, function() Ripple:Destroy() end)
 		SafeCall(Options.Callback, Key)
 	end)
-
+	
 	local function SetKey(NewKey, FromLoad)
 		Key = NewKey
 		KeyBtn.Text = Key.Name
