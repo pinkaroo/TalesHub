@@ -101,7 +101,7 @@ local Snap = TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Ou
 local Linear = TweenInfo.new(0.12, Enum.EasingStyle.Linear)
 
 local Themes = {
-Dark = {
+	Dark = {
 		Background = Color3.fromRGB(20, 20, 24),
 		Surface = Color3.fromRGB(28, 28, 34),
 		SurfaceAlt = Color3.fromRGB(36, 36, 44),
@@ -117,6 +117,8 @@ Dark = {
 		Warning = Color3.fromRGB(255, 180, 80),
 		Danger = Color3.fromRGB(255, 90, 100),
 		Info = Color3.fromRGB(100, 180, 255),
+		-- Contrasting text color to use on top of Accent backgrounds
+		OnAccent = Color3.fromRGB(20, 20, 24),
 	},
 	Light = {
 		Background = Color3.fromRGB(245, 245, 250),
@@ -134,6 +136,7 @@ Dark = {
 		Warning = Color3.fromRGB(230, 150, 40),
 		Danger = Color3.fromRGB(220, 60, 80),
 		Info = Color3.fromRGB(60, 140, 230),
+		OnAccent = Color3.fromRGB(255, 255, 255),
 	},
 	Midnight = {
 		Background = Color3.fromRGB(8, 10, 18),
@@ -151,6 +154,7 @@ Dark = {
 		Warning = Color3.fromRGB(255, 195, 100),
 		Danger = Color3.fromRGB(255, 100, 130),
 		Info = Color3.fromRGB(120, 200, 255),
+		OnAccent = Color3.fromRGB(8, 10, 18),
 	},
 	Ocean = {
 		Background = Color3.fromRGB(12, 22, 32),
@@ -168,6 +172,7 @@ Dark = {
 		Warning = Color3.fromRGB(255, 190, 90),
 		Danger = Color3.fromRGB(255, 110, 110),
 		Info = Color3.fromRGB(120, 210, 230),
+		OnAccent = Color3.fromRGB(12, 22, 32),
 	},
 	Rose = {
 		Background = Color3.fromRGB(26, 18, 24),
@@ -185,12 +190,17 @@ Dark = {
 		Warning = Color3.fromRGB(255, 185, 95),
 		Danger = Color3.fromRGB(255, 95, 115),
 		Info = Color3.fromRGB(200, 160, 255),
+		OnAccent = Color3.fromRGB(26, 18, 24),
 	},
 }
 
 local function CloneTheme(Source)
 	local Out = {}
 	for K, V in pairs(Source) do Out[K] = V end
+	-- Ensure OnAccent always has a fallback derived from Background
+	if not Out.OnAccent then
+		Out.OnAccent = Out.Background or Color3.fromRGB(20, 20, 24)
+	end
 	return Out
 end
 
@@ -246,6 +256,9 @@ local function TrackTween(Object, Property, T)
 	Map[Property] = T
 end
 
+-- FIX 1: When doing a global theme update (PanelFilter = nil), skip entries that
+-- belong to independently-themed panels (ThemeRef ~= nil). Those panels are handled
+-- separately in their own ApplyThemeTween call with the correct merged theme.
 local function ApplyThemeTween(GlobalNewTheme, PanelFilter, PanelNewTheme)
 	for i = #ThemeRegistry, 1, -1 do
 		local Entry = ThemeRegistry[i]
@@ -254,10 +267,19 @@ local function ApplyThemeTween(GlobalNewTheme, PanelFilter, PanelNewTheme)
 			table.remove(ThemeRegistry, i)
 		else
 			local Match = true
-			if PanelFilter ~= nil and Entry.ThemeRef ~= PanelFilter then
-				Match = false
+			if PanelFilter ~= nil then
+				-- Panel-specific pass: only update entries owned by this panel
+				if Entry.ThemeRef ~= PanelFilter then
+					Match = false
+				end
+			else
+				-- Global pass: skip entries owned by any independent panel,
+				-- they will be handled by their own per-panel call
+				if Entry.ThemeRef ~= nil then
+					Match = false
+				end
 			end
-if Match then
+			if Match then
 				local Source = (PanelFilter and PanelNewTheme) or GlobalNewTheme
 				local NewColor = Source[Entry.Key]
 				if NewColor then
@@ -309,7 +331,7 @@ local _ActiveThemeRef = nil
 
 local function Make(Class, Props, Children)
 	local Object = Instance.new(Class)
-if Props then
+	if Props then
 		local ParentRef = Props.Parent
 		for Key, Value in pairs(Props) do
 			if Key ~= "Parent" then
@@ -540,7 +562,7 @@ function Aurora:Init(Options)
 		Parent = GetMountParent(),
 	})
 
-self._NotifRoot = Make("Frame", {
+	self._NotifRoot = Make("Frame", {
 		Name = "Notifications",
 		BackgroundTransparency = 1,
 		Position = UDim2.new(1, -16, 1, -16),
@@ -563,7 +585,7 @@ self._NotifRoot = Make("Frame", {
 	local LoadedConfig = ReadJson(ConfigFile)
 	if typeof(LoadedConfig) == "table" then self._SavedConfig = LoadedConfig end
 
-self._Connections.Toggle = UserInputService.InputBegan:Connect(function(Input, Processed)
+	self._Connections.Toggle = UserInputService.InputBegan:Connect(function(Input, Processed)
 		if Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		if UserInputService:GetFocusedTextBox() then return end
 		if Input.KeyCode == self._ToggleKey then
@@ -582,7 +604,7 @@ self._Connections.Toggle = UserInputService.InputBegan:Connect(function(Input, P
 		if Processed then return end
 	end)
 
-self:_BuildSwitcher()
+	self:_BuildSwitcher()
 	if self._RefreshSwitcher then self._RefreshSwitcher() end
 	self._Initialized = true
 	return self
@@ -686,7 +708,7 @@ function Aurora:_BuildSwitcher()
 				RefreshSwitcher()
 			end)
 		end
-local Rows = math.min(#Closed, 8)
+		local Rows = math.min(#Closed, 8)
 		local TargetH = Rows * 28 + (Rows - 1) * 2 + 12
 		self._SwitcherMenu.Size = UDim2.fromOffset(200, TargetH)
 	end
@@ -703,13 +725,15 @@ function Aurora:SetTheme(Input)
 	self:_EnsureInit()
 	local NewTheme = ResolveTheme(Input, Theme)
 	for K, V in pairs(NewTheme) do Theme[K] = V end
+	-- Global pass: only touches entries with ThemeRef == nil (no independent panel)
 	ApplyThemeTween(NewTheme, nil, nil)
-for _, Pnl in ipairs(self._Panels) do
+	for _, Pnl in ipairs(self._Panels) do
 		if Pnl._OwnTheme and Pnl._ThemeDeltas then
 			local Merged = {}
 			for K, V in pairs(NewTheme) do Merged[K] = V end
 			for K, V in pairs(Pnl._ThemeDeltas) do Merged[K] = V end
 			Pnl._Theme = Merged
+			-- Panel pass: only touches entries with ThemeRef == Pnl
 			ApplyThemeTween(NewTheme, Pnl, Merged)
 		end
 	end
@@ -790,9 +814,9 @@ function Aurora:CreatePanel(Options)
 		Self._Hidden = Saved.Hidden == true
 	end
 
-Self._FullSize = Self._DefaultSize
+	Self._FullSize = Self._DefaultSize
 
-local PanelThemeOverride = nil
+	local PanelThemeOverride = nil
 	local SavedTheme = nil
 	if Options.Theme ~= nil then
 		local Deltas = {}
@@ -820,7 +844,7 @@ local PanelThemeOverride = nil
 	local PrevThemeRef = _ActiveThemeRef
 	if Self._OwnTheme then _ActiveThemeRef = Self end
 
-local Wrapper = Make("Frame", {
+	local Wrapper = Make("Frame", {
 		Name = "PanelWrap_" .. Self._Title,
 		BackgroundTransparency = 1,
 		Position = Self._DefaultPosition,
@@ -831,7 +855,7 @@ local Wrapper = Make("Frame", {
 	})
 	Self._Wrapper = Wrapper
 
-local Clip = Make("CanvasGroup", {
+	local Clip = Make("CanvasGroup", {
 		Name = "PanelClip",
 		BackgroundColor3 = Theme.Background,
 		Position = UDim2.fromOffset(0, 0),
@@ -855,9 +879,7 @@ local Clip = Make("CanvasGroup", {
 
 	Self._Frame = Frame
 
-
-
-local Topbar = Make("Frame", {
+	local Topbar = Make("Frame", {
 		Name = "Topbar",
 		BackgroundColor3 = Theme.Surface,
 		Size = UDim2.new(1, 0, 0, 38),
@@ -886,7 +908,7 @@ local Topbar = Make("Frame", {
 	})
 	Self._TitleLabel = TitleLabel
 
-local function MakeTopButton(IconName, FallbackSymbol, OffsetX, Hover)
+	local function MakeTopButton(IconName, FallbackSymbol, OffsetX, Hover)
 		local Btn = Make("TextButton", {
 			BackgroundColor3 = Theme.SurfaceAlt,
 			BackgroundTransparency = 1,
@@ -936,13 +958,13 @@ local function MakeTopButton(IconName, FallbackSymbol, OffsetX, Hover)
 	Self._MinIcon = MinIcon
 	Self._MinBtn = MinBtn
 
-CloseBtn.MouseButton1Click:Connect(function()
+	CloseBtn.MouseButton1Click:Connect(function()
 		Self:Hide()
 		if Self._Aurora._RefreshSwitcher then Self._Aurora._RefreshSwitcher() end
 	end)
 	MinBtn.MouseButton1Click:Connect(function() Self:ToggleMinimize() end)
 
-local BodyWrap = Make("CanvasGroup", {
+	local BodyWrap = Make("CanvasGroup", {
 		Name = "BodyWrap",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -975,7 +997,7 @@ local BodyWrap = Make("CanvasGroup", {
 
 	MakeDraggable(Wrapper, Topbar, Self)
 
-if Self._Hidden then
+	if Self._Hidden then
 		Wrapper.Visible = false
 		Wrapper.Size = Self._FullSize
 		BodyWrap.GroupTransparency = Self._Minimized and 1 or 0
@@ -989,19 +1011,19 @@ if Self._Hidden then
 		BodyWrap.GroupTransparency = 0
 	end
 
-if SavedTheme then
+	if SavedTheme then
 		for K, V in pairs(SavedTheme) do Theme[K] = V end
 	end
 	_ActiveThemeRef = PrevThemeRef
 
-table.insert(self._Panels, Self)
+	table.insert(self._Panels, Self)
 	if self._RefreshSwitcher then self._RefreshSwitcher() end
 	return Self
 end
 
 function Panel:_PersistLayout()
 	local Entry = self._Aurora._Layout[self._Key] or {}
-Entry.X = self._Wrapper.Position.X.Offset
+	Entry.X = self._Wrapper.Position.X.Offset
 	Entry.Y = self._Wrapper.Position.Y.Offset
 	Entry.W = self._FullSize.X.Offset
 	Entry.H = self._FullSize.Y.Offset
@@ -1131,25 +1153,48 @@ function Panel:AddSection(TitleOrOptions)
 	Self._Container = Container
 	Self._Content = Content
 	table.insert(self._Sections, Self)
-return Self
+	return Self
 end
 
-local function HookHover(Object, NormalKey, HoverKey, Property)
+-- FIX 2: HookHover now also tweens TextColor3 so text stays readable when the
+-- background transitions to Accent. On hover we flip text to OnAccent (a dark
+-- contrasting color); on leave we restore it to Theme.Text.
+-- The optional TextObj parameter lets callers pass a separate text instance to
+-- tween (e.g. a child TextLabel), otherwise we tween TextColor3 on Object itself.
+local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 	Property = Property or "BackgroundColor3"
 	if typeof(NormalKey) ~= "string" then NormalKey = ReverseLookupThemeKey(NormalKey) or "Elevated" end
 	if typeof(HoverKey) ~= "string" then HoverKey = ReverseLookupThemeKey(HoverKey) or "Accent" end
+
+	-- Only flip text color when hovering to an Accent-family background that
+	-- could clash with the normal text color.
+	local FlipsText = (HoverKey == "Accent" or HoverKey == "AccentHover")
+	local TextTarget = TextObj or Object
+
 	Object.MouseEnter:Connect(function()
 		CancelTween(Object, Property)
 		local T = TweenService:Create(Object, SpringFast, { [Property] = Theme[HoverKey] })
 		TrackTween(Object, Property, T)
 		T:Play()
+		if FlipsText then
+			CancelTween(TextTarget, "TextColor3")
+			local Tt = TweenService:Create(TextTarget, SpringFast, { TextColor3 = Theme.OnAccent })
+			TrackTween(TextTarget, "TextColor3", Tt)
+			Tt:Play()
+		end
 	end)
 	Object.MouseLeave:Connect(function()
 		CancelTween(Object, Property)
 		local T = TweenService:Create(Object, SpringFast, { [Property] = Theme[NormalKey] })
 		TrackTween(Object, Property, T)
 		T:Play()
-end)
+		if FlipsText then
+			CancelTween(TextTarget, "TextColor3")
+			local Tt = TweenService:Create(TextTarget, SpringFast, { TextColor3 = Theme.Text })
+			TrackTween(TextTarget, "TextColor3", Tt)
+			Tt:Play()
+		end
+	end)
 end
 
 local function BindFlag(Aurora, Flag, Value, Setter)
@@ -1246,7 +1291,7 @@ end
 
 function Section:AddButton(Options)
 	Options = Options or {}
-local Button = Make("TextButton", {
+	local Button = Make("TextButton", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 30),
@@ -1258,7 +1303,7 @@ local Button = Make("TextButton", {
 		ClipsDescendants = true,
 		Parent = self._Content,
 	})
-Corner(Button, 6)
+	Corner(Button, 6)
 	HookHover(Button, "Elevated", "Accent")
 	local IconFrame
 	if Options.Icon and Icons then
@@ -1276,7 +1321,7 @@ Corner(Button, 6)
 			end
 		end
 		Button.Text = ""
-		Make("TextLabel", {
+		local BtnLabel = Make("TextLabel", {
 			Name = "ButtonLabel",
 			BackgroundTransparency = 1,
 			Position = UDim2.new(0, 30, 0, 0),
@@ -1289,6 +1334,8 @@ Corner(Button, 6)
 			TextYAlignment = Enum.TextYAlignment.Center,
 			Parent = Button,
 		})
+		-- When there's a separate label child, hook hover on label's TextColor3 too
+		HookHover(Button, "Elevated", "Accent", "BackgroundColor3", BtnLabel)
 	end
 
 	Button.MouseButton1Click:Connect(function()
@@ -1323,7 +1370,7 @@ function Section:AddToggle(Options)
 	})
 	Corner(Row, 6)
 
-local LabelOffset = 10
+	local LabelOffset = 10
 	if Options.Icon and Icons then
 		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
 		if IconFrame then
@@ -1373,7 +1420,7 @@ local LabelOffset = 10
 		Parent = Row,
 	})
 
-local function Render(Animate)
+	local function Render(Animate)
 		if Animate ~= false then
 			Tween(Switch, SpringSnap, { BackgroundColor3 = Value and Theme.Accent or Theme.Surface })
 			Tween(Knob, SpringSnap, { Position = Value and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0) })
@@ -1448,7 +1495,7 @@ function Section:AddSlider(Options)
 		Parent = Container,
 	})
 
-local Track = Make("CanvasGroup", {
+	local Track = Make("CanvasGroup", {
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 28),
@@ -1465,7 +1512,7 @@ local Track = Make("CanvasGroup", {
 		Parent = Track,
 	})
 
-local Knob = Make("Frame", {
+	local Knob = Make("Frame", {
 		BackgroundColor3 = Theme.Text,
 		BorderSizePixel = 0,
 		AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1477,7 +1524,7 @@ local Knob = Make("Frame", {
 	Corner(Knob, 10)
 	Stroke(Knob, Theme.Accent, 2, 0)
 
-local function Render(Animate)
+	local function Render(Animate)
 		local Alpha = (Value - Min) / (Max - Min)
 		local TrackW = Track.AbsoluteSize.X
 		local KnobX = 10 + Alpha * TrackW
@@ -1589,10 +1636,10 @@ function Section:AddDropdown(Options)
 		Parent = Header,
 	})
 
-local Arrow
+	local Arrow
 	if Icons then
 		local Ok, Result = pcall(function()
-return Icons.Image({
+			return Icons.Image({
 				Icon = "chevron-down",
 				Size = UDim2.fromOffset(16, 16),
 				Colors = { Theme.TextDim },
@@ -1651,11 +1698,23 @@ return Icons.Image({
 		return tostring(Selected or "None")
 	end
 
-	local function UpdateButtons()
+	-- FIX 3: UpdateButtons now tweens BOTH BackgroundColor3 AND TextColor3 so they
+	-- stay in sync. An optional Instant flag skips animation for the initial render
+	-- (called from Rebuild before buttons are visible), avoiding the janky flash
+	-- of white text on an un-transitioned Surface background.
+	local function UpdateButtons(Instant)
 		for Name, Btn in pairs(Buttons) do
-			local IsSel = Multi and Selected[Name] or Selected == Name
-			Tween(Btn, SpringFast, { BackgroundColor3 = IsSel and Theme.Accent or Theme.Surface })
-			Btn.TextColor3 = IsSel and Color3.new(1, 1, 1) or Theme.TextDim
+			local IsSel = Multi and (Selected[Name] == true) or (Selected == Name)
+			local TargetBg = IsSel and Theme.Accent or Theme.Surface
+			-- Use OnAccent for selected text so it contrasts against the Accent bg;
+			-- use TextDim for unselected items.
+			local TargetText = IsSel and Theme.OnAccent or Theme.TextDim
+			if Instant then
+				Btn.BackgroundColor3 = TargetBg
+				Btn.TextColor3 = TargetText
+			else
+				Tween(Btn, SpringFast, { BackgroundColor3 = TargetBg, TextColor3 = TargetText })
+			end
 		end
 		Value.Text = DisplayText()
 	end
@@ -1686,11 +1745,13 @@ return Icons.Image({
 					Selected = Name
 				end
 				if Flag then Aurora.Flags[Flag] = Multi and Selected or Selected end
-				UpdateButtons()
+				-- Animated update on user interaction
+				UpdateButtons(false)
 				SafeCall(Options.Callback, Multi and Selected or Selected)
 			end)
 		end
-		UpdateButtons()
+		-- Instant on initial build so pre-selected items appear selected immediately
+		UpdateButtons(true)
 	end
 
 	local function SetOpen(State)
@@ -1714,7 +1775,8 @@ return Icons.Image({
 			Selected = NewValue
 		end
 		if Flag then Aurora.Flags[Flag] = Selected end
-		UpdateButtons()
+		-- Instant on load, animated on user-driven Set calls
+		UpdateButtons(FromLoad == true)
 		if not FromLoad then SafeCall(Options.Callback, Selected) end
 	end
 
@@ -1795,7 +1857,7 @@ function Section:AddKeybind(Options)
 		Btn.TextColor3 = Theme.Accent
 	end)
 
-UserInputService.InputBegan:Connect(function(Input, Processed)
+	UserInputService.InputBegan:Connect(function(Input, Processed)
 		if Listening and Input.UserInputType == Enum.UserInputType.Keyboard then
 			Listening = false
 			Btn.TextColor3 = Theme.Text
@@ -2137,7 +2199,7 @@ function Section:AddProgressBar(Options)
 		Parent = Container,
 	})
 
-local Track = Make("Frame", {
+	local Track = Make("Frame", {
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
 		Position = UDim2.fromOffset(10, 24),
@@ -2147,7 +2209,7 @@ local Track = Make("Frame", {
 	})
 	Corner(Track, 5)
 
-local FillWrap = Make("CanvasGroup", {
+	local FillWrap = Make("CanvasGroup", {
 		BackgroundColor3 = BarColor,
 		BorderSizePixel = 0,
 		Size = UDim2.new(0, 0, 1, 0),
@@ -2211,7 +2273,7 @@ local FillWrap = Make("CanvasGroup", {
 		end)
 	end
 
-local _CornerTask
+	local _CornerTask
 	local function Render(Animate)
 		local Pct = math.floor(Value * 100 + 0.5)
 		Percent.Text = Pct .. "%"
@@ -2220,7 +2282,7 @@ local _CornerTask
 		else
 			FillWrap.Size = UDim2.new(Value, 0, 1, 0)
 		end
-if _CornerTask then
+		if _CornerTask then
 			pcall(function() _CornerTask:Disconnect() end)
 			_CornerTask = nil
 		end
@@ -2255,7 +2317,7 @@ if _CornerTask then
 		if not FromLoad then SafeCall(Options.Callback, Value) end
 	end
 
-local function SetColor(NewColor)
+	local function SetColor(NewColor)
 		BarColor = NewColor
 		FillWrap.BackgroundColor3 = BarColor
 		Percent.TextColor3 = BarColor
@@ -2295,7 +2357,7 @@ function Aurora:Notify(Options)
 	local Width = 300
 	local Height = 64
 
-local Wrap = Make("CanvasGroup", {
+	local Wrap = Make("CanvasGroup", {
 		Name = "NotificationWrap",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
@@ -2316,7 +2378,7 @@ local Wrap = Make("CanvasGroup", {
 	Corner(Card, 8)
 	Stroke(Card, Theme.Border, 1, 0.2)
 
-local AccentBar = Make("Frame", {
+	local AccentBar = Make("Frame", {
 		BackgroundColor3 = AccentColor,
 		BorderSizePixel = 0,
 		Size = UDim2.new(0, 3, 1, -12),
@@ -2378,7 +2440,7 @@ local AccentBar = Make("Frame", {
 		Parent = TrackBG,
 	})
 
-Tween(Wrap, Spring, { Position = UDim2.fromOffset(0, 0) })
+	Tween(Wrap, Spring, { Position = UDim2.fromOffset(0, 0) })
 	Tween(Bar, TweenInfo.new(Duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) })
 
 	task.delay(Duration, function()
