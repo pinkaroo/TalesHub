@@ -1,4 +1,3 @@
-cat > /home/claude/Aurora_modified.lua << 'ENDOFFILE'
 --!nocheck
 
 local TweenService = game:GetService("TweenService")
