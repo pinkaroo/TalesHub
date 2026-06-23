@@ -1441,7 +1441,11 @@ function Section:AddToggle(Options)
 
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
-
+	
+	if Options.Default == true then
+		SafeCall(Options.Callback, true)
+	end
+	
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
