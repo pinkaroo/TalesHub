@@ -3017,16 +3017,16 @@ function Aurora:Notify(Options)
 		Error = Theme.Danger,
 	})[Kind] or Theme.Info
 
-	local Width = 300
-	local Height = 64
+	local Width = 320
 
 	local Wrap = Make("CanvasGroup", {
 		Name = "NotificationWrap",
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(Width, Height),
+		Size = UDim2.fromOffset(Width, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		Position = UDim2.fromOffset(Width + 40, 0),
-		GroupTransparency = 0,
+		GroupTransparency = 1,
 		Parent = self._NotifRoot,
 	})
 
@@ -3034,67 +3034,96 @@ function Aurora:Notify(Options)
 		Name = "Notification",
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
-		Size = UDim2.fromScale(1, 1),
-		ClipsDescendants = true,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		ClipsDescendants = false,
 		Parent = Wrap,
 	})
-	Corner(Card, 8)
-	Stroke(Card, Theme.Border, 1, 0.2)
+	Corner(Card, 12)
+	Stroke(Card, Theme.Border, 1, 0.3)
 
-	local AccentBar = Make("Frame", {
+	local Pill = Make("Frame", {
 		BackgroundColor3 = AccentColor,
 		BorderSizePixel = 0,
-		Size = UDim2.new(0, 3, 1, -12),
-		Position = UDim2.fromOffset(8, 6),
+		Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(3, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
 		Parent = Card,
 	})
-	Corner(AccentBar, 2)
+	Corner(Pill, 4)
 
-	local TextOffset = 20
+	local Inner = Make("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(24, 10),
+		Size = UDim2.new(1, -36, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BorderSizePixel = 0,
+		Parent = Card,
+	})
+	ListLayout(Inner, 3)
+
+	local TitleRow = Make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 20),
+		BorderSizePixel = 0,
+		Parent = Inner,
+	})
+
+	local TitleX = 0
 	if Options.Icon and Icons then
-		local IconFrame = MakeIcon(Options.Icon, Card, UDim2.fromOffset(18, 18), AccentColor)
+		local IconFrame = MakeIcon(Options.Icon, TitleRow, UDim2.fromOffset(14, 14), AccentColor)
 		if IconFrame then
 			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
-			IconFrame.Position = UDim2.new(0, 18, 0.5, -2)
-			TextOffset = 44
+			IconFrame.Position = UDim2.new(0, 0, 0.5, 0)
+			TitleX = 20
 		end
 	end
 
-	local TitleLabel = Make("TextLabel", {
+	Make("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(TextOffset, 8),
-		Size = UDim2.new(1, -TextOffset - 8, 0, 16),
+		Position = UDim2.fromOffset(TitleX, 0),
+		Size = UDim2.new(1, -TitleX, 1, 0),
+		FontFace = FontBold,
 		Text = Title,
 		TextColor3 = Theme.Text,
 		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = Card,
+		Parent = TitleRow,
 	})
-	ApplyInter(TitleLabel, "SemiBold")
 
-	local BodyLabel = Make("TextLabel", {
+	if Text ~= "" then
+		Make("TextLabel", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			FontFace = FontRegular,
+			Text = Text,
+			TextColor3 = Theme.TextDim,
+			TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextWrapped = true,
+			Parent = Inner,
+		})
+	end
+
+	Make("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(TextOffset, 26),
-		Size = UDim2.new(1, -TextOffset - 8, 0, 30),
-		Text = Text,
-		TextColor3 = Theme.TextDim,
-		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Top,
-		TextWrapped = true,
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Parent = Card,
+		Size = UDim2.new(1, 0, 0, 8),
+		BorderSizePixel = 0,
+		Parent = Inner,
 	})
-	ApplyInter(BodyLabel, "Regular")
 
 	local TrackBG = Make("Frame", {
 		BackgroundColor3 = Theme.BorderSoft,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0, 0, 1, -2),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0),
 		Size = UDim2.new(1, 0, 0, 2),
 		Parent = Card,
 	})
+	Make("UICorner", { CornerRadius = UDim.new(0, 2), Parent = TrackBG })
 
 	local Bar = Make("Frame", {
 		BackgroundColor3 = AccentColor,
@@ -3102,14 +3131,15 @@ function Aurora:Notify(Options)
 		Size = UDim2.new(1, 0, 1, 0),
 		Parent = TrackBG,
 	})
+	Make("UICorner", { CornerRadius = UDim.new(0, 2), Parent = Bar })
 
-	Tween(Wrap, Spring, { Position = UDim2.fromOffset(0, 0) })
+	Tween(Wrap, Spring, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 })
 	Tween(Bar, TweenInfo.new(Duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) })
 
 	task.delay(Duration, function()
 		Tween(Wrap, SpringFast, { Position = UDim2.fromOffset(Width + 40, 0), GroupTransparency = 1 })
 		task.wait(0.3)
-		Wrap:Destroy()
+		pcall(function() Wrap:Destroy() end)
 	end)
 end
 
