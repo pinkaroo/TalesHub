@@ -1368,6 +1368,10 @@ function Aurora:CreateWindow(Options)
 		end)
 	end
 
+	Self._IsWindow = true
+	table.insert(self._Panels, Self)
+	if self._RefreshSwitcher then self._RefreshSwitcher() end
+
 	return Self
 end
 
