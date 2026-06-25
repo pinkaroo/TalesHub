@@ -1309,7 +1309,7 @@ function Aurora:CreateWindow(Options)
 		Tween(MinBtn, SpringFast, { BackgroundTransparency = 1, TextColor3 = Theme.TextDim })
 		if MinIcon then pcall(function() Tween(MinIcon, SpringFast, { ImageColor3 = Theme.TextDim }) end) end
 	end)
-	MinBtn.MouseButton1Click:Connect(function() Self:ToggleVisible() end)
+	MinBtn.MouseButton1Click:Connect(function() Self:ToggleMinimize() end)
 
 	local Body = Make("Frame", {
 		Name = "WindowBody",
