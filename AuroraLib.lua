@@ -1213,6 +1213,7 @@ function Aurora:CreateWindow(Options)
 		if Saved.X and Saved.Y then Self._Position = UDim2.fromOffset(Saved.X, Saved.Y) end
 		if Saved.W and Saved.H then Self._Size = UDim2.fromOffset(Saved.W, Saved.H) end
 		Self._Hidden = Saved.Hidden == true
+		Self._Minimized = Saved.Minimized == true
 	end
 
 	local Wrapper = Make("Frame", {
@@ -1361,6 +1362,8 @@ function Aurora:CreateWindow(Options)
 
 	if Self._Hidden then
 		Wrapper.Visible = false
+	elseif Self._Minimized then
+		Wrapper.Size = UDim2.fromOffset(Self._Size.X.Offset, 38)
 	end
 
 	if Options.ToggleKey then
@@ -1387,9 +1390,10 @@ function Window:_PersistLayout()
 	local Entry = self._Aurora._Layout[self._Key] or {}
 	Entry.X = self._Wrapper.Position.X.Offset
 	Entry.Y = self._Wrapper.Position.Y.Offset
-	Entry.W = self._Wrapper.Size.X.Offset
-	Entry.H = self._Wrapper.Size.Y.Offset
+	Entry.W = self._Size.X.Offset
+	Entry.H = self._Size.Y.Offset
 	Entry.Hidden = self._Hidden
+	Entry.Minimized = self._Minimized == true
 	self._Aurora._Layout[self._Key] = Entry
 	SaveLayout()
 end
@@ -1518,6 +1522,11 @@ function Window:SelectTab(TargetTab)
 		T._Body.Visible = IsActive
 		Tween(T._Btn, SpringFast, { BackgroundTransparency = IsActive and 0 or 1, BackgroundColor3 = IsActive and Theme.Accent or Theme.SurfaceAlt })
 		Tween(T._Label, SpringFast, { TextColor3 = IsActive and Theme.OnAccent or Theme.TextDim })
+		for _, Child in ipairs(T._Btn:GetDescendants()) do
+			if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+				pcall(function() Tween(Child, SpringFast, { ImageColor3 = IsActive and Theme.OnAccent or Theme.TextDim }) end)
+			end
+		end
 	end
 	self._ActiveTab = TargetTab
 end
@@ -2940,10 +2949,20 @@ function Section:AddButtonBind(Options)
 	BtnRegion.MouseEnter:Connect(function()
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Accent })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.OnAccent })
+		for _, Child in ipairs(Row:GetDescendants()) do
+			if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+				pcall(function() Tween(Child, SpringFast, { ImageColor3 = Theme.OnAccent }) end)
+			end
+		end
 	end)
 	BtnRegion.MouseLeave:Connect(function()
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Elevated })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.Text })
+		for _, Child in ipairs(Row:GetDescendants()) do
+			if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+				pcall(function() Tween(Child, SpringFast, { ImageColor3 = Theme.TextDim }) end)
+			end
+		end
 	end)
 
 	BtnRegion.MouseButton1Click:Connect(function()
