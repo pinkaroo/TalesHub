@@ -1115,10 +1115,8 @@ function Panel:Show()
 	self:_PersistLayout()
 end
 
-function Panel:AddSection(TitleOrOptions)
+local function BuildSectionInto(BodyFrame, TitleOrOptions)
 	local Self = setmetatable({}, Section)
-	Self._Panel = self
-	Self._Aurora = self._Aurora
 
 	local Title, IconStr
 	if typeof(TitleOrOptions) == "table" then
@@ -1133,7 +1131,7 @@ function Panel:AddSection(TitleOrOptions)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		Parent = self._Body,
+		Parent = BodyFrame,
 	})
 	Corner(Container, 10)
 	Stroke(Container, Theme.BorderSoft, 1, 0.2)
@@ -1171,6 +1169,336 @@ function Panel:AddSection(TitleOrOptions)
 
 	Self._Container = Container
 	Self._Content = Content
+	return Self
+end
+
+function Panel:AddSection(TitleOrOptions)
+	local Self = BuildSectionInto(self._Body, TitleOrOptions)
+	Self._Panel = self
+	Self._Aurora = self._Aurora
+	table.insert(self._Sections, Self)
+	return Self
+end
+
+local Window = {}
+Window.__index = Window
+
+local Tab = {}
+Tab.__index = Tab
+
+function Aurora:CreateWindow(Options)
+	self:_EnsureInit()
+	Options = Options or {}
+	local Self = setmetatable({}, Window)
+	Self._Aurora = self
+	Self._Title = Options.Title or "Window"
+	Self._Key = "Window_" .. (Options.Key or Self._Title)
+	Self._Size = Options.Size or UDim2.fromOffset(560, 380)
+	Self._Position = Options.Position or UDim2.fromOffset(120, 90)
+	Self._SidebarW = Options.SidebarWidth or 140
+	Self._Tabs = {}
+	Self._ActiveTab = nil
+	Self._Hidden = false
+
+	local Saved = self._Layout[Self._Key]
+	if typeof(Saved) == "table" then
+		if Saved.X and Saved.Y then Self._Position = UDim2.fromOffset(Saved.X, Saved.Y) end
+		if Saved.W and Saved.H then Self._Size = UDim2.fromOffset(Saved.W, Saved.H) end
+		Self._Hidden = Saved.Hidden == true
+	end
+
+	local Wrapper = Make("Frame", {
+		Name = "WindowWrap_" .. Self._Title,
+		BackgroundTransparency = 1,
+		Position = Self._Position,
+		Size = Self._Size,
+		BorderSizePixel = 0,
+		ClipsDescendants = false,
+		Parent = self._Screen,
+	})
+	Self._Wrapper = Wrapper
+
+	local Clip = Make("CanvasGroup", {
+		Name = "WindowClip",
+		BackgroundColor3 = Theme.Background,
+		Size = UDim2.fromScale(1, 1),
+		BorderSizePixel = 0,
+		GroupTransparency = 0,
+		Parent = Wrapper,
+	})
+	Corner(Clip, 12)
+	local WinStroke = Stroke(Clip, Theme.Border, 1, 0.4)
+	WinStroke.LineJoinMode = Enum.LineJoinMode.Round
+	Self._Clip = Clip
+
+	local Frame = Make("Frame", {
+		Name = "Window_" .. Self._Title,
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		BorderSizePixel = 0,
+		Parent = Clip,
+	})
+
+	local Topbar = Make("Frame", {
+		Name = "Topbar",
+		BackgroundColor3 = Theme.Surface,
+		Size = UDim2.new(1, 0, 0, 38),
+		BorderSizePixel = 0,
+		Parent = Frame,
+	})
+	Make("Frame", {
+		BackgroundColor3 = Theme.BorderSoft,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, 0, 1, -1),
+		Size = UDim2.new(1, 0, 0, 1),
+		Parent = Topbar,
+	})
+
+	Make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -60, 1, 0),
+		FontFace = FontMedium,
+		Text = Self._Title,
+		TextColor3 = Theme.Text,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = Topbar,
+	})
+
+	local MinBtn = Make("TextButton", {
+		BackgroundColor3 = Theme.SurfaceAlt,
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(1, -28, 0.5, 0),
+		Size = UDim2.fromOffset(22, 22),
+		FontFace = FontBold,
+		Text = "",
+		TextColor3 = Theme.TextDim,
+		TextSize = 14,
+		AutoButtonColor = false,
+		Parent = Topbar,
+	})
+	Corner(MinBtn, 6)
+	local MinIcon
+	if Icons then
+		local Ok, Result = pcall(function()
+			return Icons.Image({ Icon = "minus", Size = UDim2.fromOffset(14, 14), Colors = { Theme.TextDim } })
+		end)
+		if Ok and Result and Result.IconFrame then
+			Result.IconFrame.Parent = MinBtn
+			Result.IconFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+			Result.IconFrame.Position = UDim2.fromScale(0.5, 0.5)
+			MinIcon = Result.IconFrame
+		end
+	end
+	if not MinIcon then MinBtn.Text = "-" end
+	MinBtn.MouseEnter:Connect(function()
+		Tween(MinBtn, SpringFast, { BackgroundTransparency = 0, TextColor3 = Theme.Accent })
+		if MinIcon then pcall(function() Tween(MinIcon, SpringFast, { ImageColor3 = Theme.Accent }) end) end
+	end)
+	MinBtn.MouseLeave:Connect(function()
+		Tween(MinBtn, SpringFast, { BackgroundTransparency = 1, TextColor3 = Theme.TextDim })
+		if MinIcon then pcall(function() Tween(MinIcon, SpringFast, { ImageColor3 = Theme.TextDim }) end) end
+	end)
+	MinBtn.MouseButton1Click:Connect(function() Self:Hide() end)
+
+	local Body = Make("Frame", {
+		Name = "WindowBody",
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 38),
+		Size = UDim2.new(1, 0, 1, -38),
+		BorderSizePixel = 0,
+		Parent = Frame,
+	})
+
+	local Sidebar = Make("ScrollingFrame", {
+		Name = "Sidebar",
+		BackgroundColor3 = Theme.Surface,
+		BorderSizePixel = 0,
+		Size = UDim2.new(0, Self._SidebarW, 1, 0),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = Theme.Border,
+		ScrollBarImageTransparency = 0.3,
+		ClipsDescendants = true,
+		Parent = Body,
+	})
+	Padding(Sidebar, 8, 6, 8, 6)
+	ListLayout(Sidebar, 4)
+
+	Make("Frame", {
+		BackgroundColor3 = Theme.BorderSoft,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0, Self._SidebarW, 0, 0),
+		Size = UDim2.new(0, 1, 1, 0),
+		Parent = Body,
+	})
+
+	local ContentArea = Make("Frame", {
+		Name = "ContentArea",
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0, Self._SidebarW + 1, 0, 0),
+		Size = UDim2.new(1, -Self._SidebarW - 1, 1, 0),
+		Parent = Body,
+	})
+
+	Self._Sidebar = Sidebar
+	Self._ContentArea = ContentArea
+	Self._Frame = Frame
+	Self._Topbar = Topbar
+
+	MakeDraggable(Wrapper, Topbar, Self)
+
+	if Self._Hidden then
+		Wrapper.Visible = false
+	end
+
+	if Options.ToggleKey then
+		Self._ToggleKey = Options.ToggleKey
+		Self._ToggleConn = UserInputService.InputBegan:Connect(function(Input, Processed)
+			if Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			if UserInputService:GetFocusedTextBox() then return end
+			if Input.KeyCode == Self._ToggleKey then
+				Self:ToggleVisible()
+				return
+			end
+			if Processed then return end
+		end)
+	end
+
+	return Self
+end
+
+function Window:_PersistLayout()
+	local Entry = self._Aurora._Layout[self._Key] or {}
+	Entry.X = self._Wrapper.Position.X.Offset
+	Entry.Y = self._Wrapper.Position.Y.Offset
+	Entry.W = self._Wrapper.Size.X.Offset
+	Entry.H = self._Wrapper.Size.Y.Offset
+	Entry.Hidden = self._Hidden
+	self._Aurora._Layout[self._Key] = Entry
+	SaveLayout()
+end
+
+function Window:Hide()
+	if self._Hidden then return end
+	self._Hidden = true
+	Tween(self._Clip, SpringFast, { GroupTransparency = 1 })
+	task.delay(0.25, function()
+		if self._Hidden then self._Wrapper.Visible = false end
+	end)
+	self:_PersistLayout()
+end
+
+function Window:Show()
+	if not self._Hidden then return end
+	self._Hidden = false
+	self._Wrapper.Visible = true
+	self._Clip.GroupTransparency = 1
+	Tween(self._Clip, SpringFast, { GroupTransparency = 0 })
+	self:_PersistLayout()
+end
+
+function Window:ToggleVisible()
+	if self._Hidden then self:Show() else self:Hide() end
+end
+
+function Window:SetToggleKey(NewKey)
+	self._ToggleKey = NewKey
+end
+
+function Window:AddTab(Options)
+	Options = Options or {}
+	local Self = setmetatable({}, Tab)
+	Self._Window = self
+	Self._Aurora = self._Aurora
+	Self._Title = Options.Title or "Tab"
+	Self._Sections = {}
+
+	local Btn = Make("TextButton", {
+		Name = "TabBtn_" .. Self._Title,
+		BackgroundColor3 = Theme.SurfaceAlt,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.new(1, 0, 0, 32),
+		AutoButtonColor = false,
+		Text = "",
+		Parent = self._Sidebar,
+	})
+	Corner(Btn, 6)
+
+	local LabelX = 12
+	if Options.Icon and Icons then
+		local IconFrame = MakeIcon(Options.Icon, Btn, UDim2.fromOffset(14, 14), Theme.TextDim)
+		if IconFrame then
+			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+			LabelX = 30
+		end
+	end
+
+	local Label = Make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(LabelX, 0),
+		Size = UDim2.new(1, -LabelX - 8, 1, 0),
+		FontFace = FontMedium,
+		Text = Self._Title,
+		TextColor3 = Theme.TextDim,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = Btn,
+	})
+
+	local Body = Make("ScrollingFrame", {
+		Name = "TabBody_" .. Self._Title,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Theme.Border,
+		ScrollBarImageTransparency = 0.3,
+		ClipsDescendants = true,
+		Visible = false,
+		Parent = self._ContentArea,
+	})
+	Padding(Body, 10, 12, 12, 12)
+	ListLayout(Body, 8)
+
+	Self._Btn = Btn
+	Self._Label = Label
+	Self._Body = Body
+
+	Btn.MouseButton1Click:Connect(function() self:SelectTab(Self) end)
+	Btn.MouseEnter:Connect(function()
+		if self._ActiveTab ~= Self then Tween(Btn, SpringFast, { BackgroundTransparency = 0 }) end
+	end)
+	Btn.MouseLeave:Connect(function()
+		if self._ActiveTab ~= Self then Tween(Btn, SpringFast, { BackgroundTransparency = 1 }) end
+	end)
+
+	table.insert(self._Tabs, Self)
+	if not self._ActiveTab then self:SelectTab(Self) end
+	return Self
+end
+
+function Window:SelectTab(TargetTab)
+	for _, T in ipairs(self._Tabs) do
+		local IsActive = T == TargetTab
+		T._Body.Visible = IsActive
+		Tween(T._Btn, SpringFast, { BackgroundTransparency = IsActive and 0 or 1, BackgroundColor3 = IsActive and Theme.Accent or Theme.SurfaceAlt })
+		Tween(T._Label, SpringFast, { TextColor3 = IsActive and Theme.OnAccent or Theme.TextDim })
+	end
+	self._ActiveTab = TargetTab
+end
+
+function Tab:AddSection(TitleOrOptions)
+	local Self = BuildSectionInto(self._Body, TitleOrOptions)
+	Self._Tab = self
+	Self._Aurora = self._Aurora
 	table.insert(self._Sections, Self)
 	return Self
 end
@@ -1452,10 +1780,8 @@ function Section:AddToggle(Options)
 
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
-	
-	if Options.Default == true then
-		SafeCall(Options.Callback, true)
-	end
+
+	SafeCall(Options.Callback, Value)
 	
 	return {
 		Set = function(_, V) Set(V) end,
@@ -1669,7 +1995,7 @@ function Section:AddDropdown(Options)
 		Text = "",
 		TextColor3 = Theme.TextDim,
 		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Right,
+		TextXAlignment = Multi and Enum.TextXAlignment.Left or Enum.TextXAlignment.Right,
 		TextTruncate = Enum.TextTruncate.AtEnd,
 		ZIndex = 2,
 		Parent = Header,
@@ -1728,15 +2054,62 @@ function Section:AddDropdown(Options)
 	})
 	Corner(OverlayMenu, 8)
 	Stroke(OverlayMenu, Theme.Border, 1, 0.2)
-	Make("UIPadding", {
+
+	local HeaderH = Multi and 22 or 0
+	local CloseBtn
+
+	if Multi then
+		CloseBtn = Make("TextButton", {
+			Name = "CloseBtn",
+			BackgroundColor3 = Theme.SurfaceAlt,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -4, 0, 4),
+			Size = UDim2.fromOffset(16, 16),
+			Text = "",
+			AutoButtonColor = false,
+			ZIndex = 211,
+			Parent = OverlayMenu,
+		})
+		Corner(CloseBtn, 4)
+		local CloseLabel = Make("TextLabel", {
+			BackgroundTransparency = 1,
+			Size = UDim2.fromScale(1, 1),
+			FontFace = FontBold,
+			Text = "x",
+			TextColor3 = Theme.TextDim,
+			TextSize = 11,
+			ZIndex = 212,
+			Parent = CloseBtn,
+		})
+		CloseBtn.MouseEnter:Connect(function()
+			Tween(CloseBtn, SpringFast, { BackgroundColor3 = Theme.Danger })
+			Tween(CloseLabel, SpringFast, { TextColor3 = Theme.OnAccent })
+		end)
+		CloseBtn.MouseLeave:Connect(function()
+			Tween(CloseBtn, SpringFast, { BackgroundColor3 = Theme.SurfaceAlt })
+			Tween(CloseLabel, SpringFast, { TextColor3 = Theme.TextDim })
+		end)
+	end
+
+	local ItemsList = Make("Frame", {
+		Name = "ItemsList",
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, HeaderH),
+		Size = UDim2.new(1, 0, 1, -HeaderH),
+		ZIndex = 201,
 		Parent = OverlayMenu,
+	})
+	Make("UIPadding", {
+		Parent = ItemsList,
 		PaddingTop = UDim.new(0, 4),
 		PaddingBottom = UDim.new(0, 4),
 		PaddingLeft = UDim.new(0, 4),
 		PaddingRight = UDim.new(0, 4),
 	})
 	Make("UIListLayout", {
-		Parent = OverlayMenu,
+		Parent = ItemsList,
 		Padding = UDim.new(0, 2),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	})
@@ -1749,8 +2122,7 @@ function Section:AddDropdown(Options)
 			local Names = {}
 			for K, V in pairs(Selected) do if V then table.insert(Names, K) end end
 			if #Names == 0 then return "None" end
-			if #Names <= 2 then return table.concat(Names, ", ") end
-			return ("%d selected"):format(#Names)
+			return table.concat(Names, ", ")
 		end
 		return tostring(Selected or "None")
 	end
@@ -1780,8 +2152,15 @@ function Section:AddDropdown(Options)
 		end)
 	end
 
+	if CloseBtn then
+		CloseBtn.MouseButton1Click:Connect(function()
+			CloseMenu()
+			_ActiveDropdown = nil
+		end)
+	end
+
 	local function Rebuild()
-		for _, Child in ipairs(OverlayMenu:GetChildren()) do
+		for _, Child in ipairs(ItemsList:GetChildren()) do
 			if Child:IsA("TextButton") then Child:Destroy() end
 		end
 		Buttons = {}
@@ -1796,7 +2175,7 @@ function Section:AddDropdown(Options)
 				TextSize = 12,
 				AutoButtonColor = false,
 				ZIndex = 201,
-				Parent = OverlayMenu,
+				Parent = ItemsList,
 			})
 			Corner(Btn, 5)
 			Buttons[Name] = Btn
@@ -1808,9 +2187,9 @@ function Section:AddDropdown(Options)
 					CloseMenu()
 					_ActiveDropdown = nil
 				end
-				if Flag then Aurora.Flags[Flag] = Multi and Selected or Selected end
+				if Flag then Aurora.Flags[Flag] = Selected end
 				UpdateButtons(false)
-				SafeCall(Options.Callback, Multi and Selected or Selected)
+				SafeCall(Options.Callback, Selected)
 			end)
 		end
 		UpdateButtons(true)
@@ -1819,13 +2198,17 @@ function Section:AddDropdown(Options)
 	local function OpenMenu()
 		_CloseActiveDropdown()
 		Open = true
-		
+
+		pcall(function()
+			if Aurora._OverlayRoot then Aurora._OverlayRoot.Parent = Aurora._Screen end
+		end)
+
 		local RowH = 26
 		local Gap = 2
 		local Pad = 8
 		local Rows = math.min(#Items, 8)
-		local TargetH = Rows * RowH + math.max(0, Rows - 1) * Gap + Pad
-		if #Items == 0 then TargetH = 32 end
+		local TargetH = HeaderH + Rows * RowH + math.max(0, Rows - 1) * Gap + Pad
+		if #Items == 0 then TargetH = HeaderH + 32 end
 		
 		local AbsPos = Container.AbsolutePosition
 		local AbsSize = Container.AbsoluteSize
