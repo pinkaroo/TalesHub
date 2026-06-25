@@ -1309,7 +1309,7 @@ function Aurora:CreateWindow(Options)
 		Tween(MinBtn, SpringFast, { BackgroundTransparency = 1, TextColor3 = Theme.TextDim })
 		if MinIcon then pcall(function() Tween(MinIcon, SpringFast, { ImageColor3 = Theme.TextDim }) end) end
 	end)
-	MinBtn.MouseButton1Click:Connect(function() Self:ToggleMinimize() end)
+	MinBtn.MouseButton1Click:Connect(function() Self:ToggleVisible() end)
 
 	local Body = Make("Frame", {
 		Name = "WindowBody",
@@ -1401,6 +1401,7 @@ function Window:Hide()
 	task.delay(0.25, function()
 		if self._Hidden then self._Wrapper.Visible = false end
 	end)
+	if self._Aurora._RefreshSwitcher then self._Aurora._RefreshSwitcher() end
 	self:_PersistLayout()
 end
 
