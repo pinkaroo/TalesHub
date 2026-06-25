@@ -540,9 +540,9 @@ end
 local function _UpdatePanelAutoHeight(Self)
 	if Self._Minimized or Self._Hidden then return end
 	if not Self._Body or not Self._Wrapper then return end
-	
+
 	local ContentH = Self._Body.AbsoluteCanvasSize.Y
-	
+
 	local TotalH = math.min(38 + ContentH + 22, Self._MaxAutoHeight)
 	TotalH = math.max(TotalH, Self._MinHeight + 10)
 
@@ -569,7 +569,7 @@ function Aurora:Init(Options)
 		DisplayOrder = 999,
 		Parent = GetMountParent(),
 	})
-	
+
 	self._OverlayRoot = Make("Frame", {
 		Name = "DropdownOverlay",
 		BackgroundTransparency = 1,
@@ -605,18 +605,26 @@ function Aurora:Init(Options)
 		if Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 		if UserInputService:GetFocusedTextBox() then return end
 		if Input.KeyCode == self._ToggleKey then
-			local AllHidden = true
-			for _, P in ipairs(self._Panels) do
-				if not P._Hidden then AllHidden = false break end
-			end
-			if AllHidden and #self._Panels > 0 then
-				self:ShowAllPanels()
-				self._Visible = true
-			else
-				self:ToggleVisible()
-			end
-			return
-		end
+	    local AllHiddenOrMin = true
+	    for _, P in ipairs(self._Panels) do
+	        if not P._Hidden and not P._Minimized then AllHiddenOrMin = false break end
+	    end
+	    if AllHiddenOrMin and #self._Panels > 0 then
+	        for _, P in ipairs(self._Panels) do
+	            if P._Hidden then P:Show()
+	            elseif P._Minimized then P:SetMinimized(false) end
+	        end
+	        if self._RefreshSwitcher then self._RefreshSwitcher() end
+	    else
+	        for _, P in ipairs(self._Panels) do
+	            if not P._Hidden and not P._Minimized then
+	                if P._IsWindow then P:ToggleMinimize() else P:Hide() end
+	            end
+	        end
+	        if self._RefreshSwitcher then self._RefreshSwitcher() end
+	    end
+	    return
+	end
 		if Processed then return end
 	end)
 
@@ -783,7 +791,7 @@ end
 function Aurora:ShowPanel(Key)
 	for _, P in ipairs(self._Panels) do
 		if P._Key == Key or P._Title == Key then
-			P:Show()
+			if P._Minimized then P:SetMinimized(false) else P:Show() end
 			if self._RefreshSwitcher then self._RefreshSwitcher() end
 			return true
 		end
@@ -801,7 +809,7 @@ end
 function Aurora:GetClosedPanels()
 	local List = {}
 	for _, P in ipairs(self._Panels) do
-		if P._Hidden then table.insert(List, { Key = P._Key, Title = P._Title }) end
+		if P._Hidden or P._Minimized then table.insert(List, { Key = P._Key, Title = P._Title }) end
 	end
 	return List
 end
@@ -1009,7 +1017,7 @@ function Aurora:CreatePanel(Options)
 	Self._Body = Body
 	Self._BodyWrap = BodyWrap
 	Self._Topbar = Topbar
-	
+
 	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
 		_UpdatePanelAutoHeight(Self)
 	end)
@@ -1301,7 +1309,7 @@ function Aurora:CreateWindow(Options)
 		Tween(MinBtn, SpringFast, { BackgroundTransparency = 1, TextColor3 = Theme.TextDim })
 		if MinIcon then pcall(function() Tween(MinIcon, SpringFast, { ImageColor3 = Theme.TextDim }) end) end
 	end)
-	MinBtn.MouseButton1Click:Connect(function() Self:Hide() end)
+	MinBtn.MouseButton1Click:Connect(function() Self:ToggleVisible() end)
 
 	local Body = Make("Frame", {
 		Name = "WindowBody",
@@ -1407,6 +1415,20 @@ end
 
 function Window:ToggleVisible()
 	if self._Hidden then self:Show() else self:Hide() end
+end
+
+function Window:ToggleMinimize()
+    self:SetMinimized(not self._Minimized)
+end
+
+function Window:SetMinimized(State)
+    self._Minimized = State
+    if State then
+        Tween(self._Wrapper, Spring, { Size = UDim2.fromOffset(self._Size.X.Offset, 38) })
+    else
+        Tween(self._Wrapper, Spring, { Size = self._Size })
+    end
+    self:_PersistLayout()
 end
 
 function Window:SetToggleKey(NewKey)
@@ -1515,6 +1537,14 @@ local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 	local FlipsText = (HoverKey == "Accent" or HoverKey == "AccentHover")
 	local TextTarget = TextObj or Object
 
+	local function TweenIcons(Color)
+		for _, Child in ipairs(Object:GetDescendants()) do
+			if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+				pcall(function() Tween(Child, SpringFast, { ImageColor3 = Color }) end)
+			end
+		end
+	end
+
 	Object.MouseEnter:Connect(function()
 		CancelTween(Object, Property)
 		local T = TweenService:Create(Object, SpringFast, { [Property] = Theme[HoverKey] })
@@ -1525,6 +1555,7 @@ local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 			local Tt = TweenService:Create(TextTarget, SpringFast, { TextColor3 = Theme.OnAccent })
 			TrackTween(TextTarget, "TextColor3", Tt)
 			Tt:Play()
+			TweenIcons(Theme.OnAccent)
 		end
 	end)
 	Object.MouseLeave:Connect(function()
@@ -1537,6 +1568,7 @@ local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 			local Tt = TweenService:Create(TextTarget, SpringFast, { TextColor3 = Theme.Text })
 			TrackTween(TextTarget, "TextColor3", Tt)
 			Tt:Play()
+			TweenIcons(Theme.Text)
 		end
 	end)
 end
@@ -1786,7 +1818,7 @@ function Section:AddToggle(Options)
 	BindFlag(Aurora, Flag, Value, Set)
 
 	SafeCall(Options.Callback, Value)
-	
+
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
@@ -1958,7 +1990,7 @@ function Section:AddDropdown(Options)
 	end
 
 	_EnsureDropdownDismiss()
-	
+
 	local Container = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
@@ -2044,7 +2076,7 @@ function Section:AddDropdown(Options)
 			Parent = Header,
 		})
 	end
-	
+
 	local OverlayMenu = Make("Frame", {
 		Name = "DropdownMenu",
 		BackgroundColor3 = Theme.Surface,
@@ -2213,12 +2245,12 @@ function Section:AddDropdown(Options)
 		local Rows = math.min(#Items, 8)
 		local TargetH = HeaderH + Rows * RowH + math.max(0, Rows - 1) * Gap + Pad
 		if #Items == 0 then TargetH = HeaderH + 32 end
-		
+
 		local AbsPos = Container.AbsolutePosition
 		local AbsSize = Container.AbsoluteSize
 		local MenuW = AbsSize.X
 		local ScreenH = Aurora._Screen.AbsoluteSize.Y
-		
+
 		local SpaceBelow = ScreenH - (AbsPos.Y + AbsSize.Y)
 		local PosY
 		if SpaceBelow >= TargetH + 4 then
@@ -2245,15 +2277,15 @@ function Section:AddDropdown(Options)
 			OpenMenu()
 		end
 	end)
-	
+
 	Header.InputBegan:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-			
+
 		end
 	end)
 	OverlayMenu.InputBegan:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-			
+
 		end
 	end)
 
@@ -2843,7 +2875,7 @@ function Section:AddButtonBind(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
-	
+
 	local BtnRegion = Make("TextButton", {
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, -84, 1, 0),
@@ -2852,7 +2884,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 2,
 		Parent = Row,
 	})
-	
+
 	local LabelX = 10
 	if Options.Icon and Icons then
 		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
@@ -2876,7 +2908,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 3,
 		Parent = Row,
 	})
-	
+
 	Make("Frame", {
 		BackgroundColor3 = Theme.BorderSoft,
 		BorderSizePixel = 0,
@@ -2886,7 +2918,7 @@ function Section:AddButtonBind(Options)
 		ZIndex = 2,
 		Parent = Row,
 	})
-	
+
 	local KeyBtn = Make("TextButton", {
 		BackgroundColor3 = Theme.Surface,
 		BorderSizePixel = 0,
@@ -2903,7 +2935,7 @@ function Section:AddButtonBind(Options)
 	})
 	Corner(KeyBtn, 4)
 	Stroke(KeyBtn, Theme.Border, 1, 0.3)
-	
+
 	BtnRegion.MouseEnter:Connect(function()
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Accent })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.OnAccent })
@@ -2912,7 +2944,7 @@ function Section:AddButtonBind(Options)
 		Tween(Row, SpringFast, { BackgroundColor3 = Theme.Elevated })
 		Tween(BtnLabel, SpringFast, { TextColor3 = Theme.Text })
 	end)
-	
+
 	BtnRegion.MouseButton1Click:Connect(function()
 		local Ripple = Make("Frame", {
 			BackgroundColor3 = Color3.new(1, 1, 1),
@@ -2931,7 +2963,7 @@ function Section:AddButtonBind(Options)
 		task.delay(0.55, function() Ripple:Destroy() end)
 		SafeCall(Options.Callback, Key)
 	end)
-	
+
 	local function SetKey(NewKey, FromLoad)
 		Key = NewKey
 		KeyBtn.Text = Key.Name
