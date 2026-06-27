@@ -618,7 +618,7 @@ function Aurora:Init(Options)
 	    else
 	        for _, P in ipairs(self._Panels) do
 	            if not P._Hidden and not P._Minimized then
-	                if P._IsWindow then P:ToggleMinimize() else P:Hide() end
+	                P:Hide()
 	            end
 	        end
 	        if self._RefreshSwitcher then self._RefreshSwitcher() end
@@ -1123,6 +1123,10 @@ function Panel:Show()
 	self:_PersistLayout()
 end
 
+function Panel:SetVisible(State)
+	if State then self:Show() else self:Hide() end
+end
+
 local function BuildSectionInto(BodyFrame, TitleOrOptions)
 	local Self = setmetatable({}, Section)
 
@@ -1420,6 +1424,10 @@ end
 
 function Window:ToggleVisible()
 	if self._Hidden then self:Show() else self:Hide() end
+end
+
+function Window:SetVisible(State)
+	if State then self:Show() else self:Hide() end
 end
 
 function Window:ToggleMinimize()
@@ -1957,6 +1965,7 @@ function Section:AddSlider(Options)
 
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
+	SafeCall(Options.Callback, Value)
 
 	return {
 		Set = function(_, V) Set(V) end,
@@ -2325,6 +2334,7 @@ function Section:AddDropdown(Options)
 
 	Rebuild()
 	BindFlag(Aurora, Flag, Selected, Set)
+	SafeCall(Options.Callback, Selected)
 
 	return {
 		Set = function(_, V) Set(V) end,
@@ -2479,6 +2489,7 @@ function Section:AddTextbox(Options)
 	end
 
 	BindFlag(Aurora, Flag, Value, Set)
+	SafeCall(Options.Callback, Value, false)
 
 	return {
 		Set = function(_, V) Set(V) end,
