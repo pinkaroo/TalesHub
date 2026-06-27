@@ -66,13 +66,48 @@ do
 	end
 end
 
+local function IsAssetIconString(IconString)
+	if typeof(IconString) ~= "string" then return false end
+	if IconString:match("^rbxassetid://") then return true end
+	if IconString:match("^rbxasset://") then return true end
+	if IconString:match("^rbxthumb://") then return true end
+	if IconString:match("^rbxhttp://") then return true end
+	if IconString:match("^https?://") then return true end
+	if IconString:match("^%d+$") then return true end
+	return false
+end
+
+local function ResolveIconAssetUri(IconString)
+	if IconString:match("^%d+$") then
+		return "rbxassetid://" .. IconString
+	end
+	return IconString
+end
+
 local function MakeIcon(IconString, Parent, Size, Color)
-	if not Icons or not IconString then return nil end
+	if not IconString then return nil end
+	Size = Size or UDim2.fromOffset(14, 14)
+	Color = Color or Color3.fromRGB(240, 240, 248)
+
+	if IsAssetIconString(IconString) then
+		local Image = Instance.new("ImageLabel")
+		Image.Name = "Icon"
+		Image.BackgroundTransparency = 1
+		Image.BorderSizePixel = 0
+		Image.ScaleType = Enum.ScaleType.Fit
+		Image.Image = ResolveIconAssetUri(IconString)
+		pcall(function() Image.ImageColor3 = Color end)
+		Image.Size = Size
+		Image.Parent = Parent
+		return Image
+	end
+
+	if not Icons then return nil end
 	local Ok, Result = pcall(function()
 		return Icons.Image({
 			Icon = IconString,
-			Size = Size or UDim2.fromOffset(14, 14),
-			Colors = { Color or Theme.Text },
+			Size = Size,
+			Colors = { Color },
 		})
 	end)
 	if not Ok or not Result or not Result.IconFrame then return nil end
@@ -383,6 +418,20 @@ local function ListLayout(Parent, Spacing, Direction)
 		HorizontalAlignment = Enum.HorizontalAlignment.Left,
 		Parent = Parent,
 	})
+end
+
+local _LayoutOrderCounters = setmetatable({}, { __mode = "k" })
+
+local function NextLayoutOrder(Container)
+	local Current = (_LayoutOrderCounters[Container] or 0) + 1
+	_LayoutOrderCounters[Container] = Current
+	return Current
+end
+
+local function UnbindFlag(AuroraRef, Flag)
+	if not Flag or not AuroraRef then return end
+	AuroraRef.Flags[Flag] = nil
+	AuroraRef._FlagControls[Flag] = nil
 end
 
 local function GetMountParent()
@@ -1127,6 +1176,35 @@ function Panel:SetVisible(State)
 	if State then self:Show() else self:Hide() end
 end
 
+function Panel:SetTitle(NewTitle)
+	NewTitle = tostring(NewTitle or "")
+	self._Title = NewTitle
+	if self._TitleLabel then self._TitleLabel.Text = NewTitle end
+	if self._Aurora and self._Aurora._RefreshSwitcher then self._Aurora._RefreshSwitcher() end
+	return self
+end
+
+function Panel:GetTitle()
+	return self._Title
+end
+
+function Panel:Destroy()
+	if self._Destroyed then return end
+	self._Destroyed = true
+	local Owner = self._Aurora
+	if Owner then
+		for i = #Owner._Panels, 1, -1 do
+			if Owner._Panels[i] == self then table.remove(Owner._Panels, i) end
+		end
+		if Owner._Layout then Owner._Layout[self._Key] = nil end
+		SaveLayout()
+	end
+	if self._Wrapper then
+		pcall(function() self._Wrapper:Destroy() end)
+	end
+	if Owner and Owner._RefreshSwitcher then Owner._RefreshSwitcher() end
+end
+
 local function BuildSectionInto(BodyFrame, TitleOrOptions)
 	local Self = setmetatable({}, Section)
 
@@ -1143,21 +1221,23 @@ local function BuildSectionInto(BodyFrame, TitleOrOptions)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextLayoutOrder(BodyFrame),
 		Parent = BodyFrame,
 	})
 	Corner(Container, 10)
 	Stroke(Container, Theme.BorderSoft, 1, 0.2)
 
 	local TitleOffset = 12
-	if IconStr and Icons then
-		local IconFrame = MakeIcon(IconStr, Container, UDim2.fromOffset(14, 14), Theme.Accent)
+	local IconFrame = nil
+	if IconStr then
+		IconFrame = MakeIcon(IconStr, Container, UDim2.fromOffset(14, 14), Theme.Accent)
 		if IconFrame then
 			IconFrame.Position = UDim2.fromOffset(12, 10)
 			TitleOffset = 30
 		end
 	end
 
-	Make("TextLabel", {
+	local TitleLabel = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(TitleOffset, 8),
 		Size = UDim2.new(1, -TitleOffset - 12, 0, 18),
@@ -1181,7 +1261,66 @@ local function BuildSectionInto(BodyFrame, TitleOrOptions)
 
 	Self._Container = Container
 	Self._Content = Content
+	Self._TitleLabel = TitleLabel
+	Self._IconFrame = IconFrame
+	Self._Title = Title
+	Self._IconStr = IconStr
+	Self._TitleOffset = TitleOffset
 	return Self
+end
+
+function Section:SetTitle(NewTitle)
+	NewTitle = tostring(NewTitle or "")
+	self._Title = NewTitle
+	if self._TitleLabel then self._TitleLabel.Text = NewTitle end
+	return self
+end
+
+function Section:GetTitle()
+	return self._Title
+end
+
+function Section:SetIcon(NewIcon)
+	self._IconStr = NewIcon
+	if self._IconFrame then
+		pcall(function() self._IconFrame:Destroy() end)
+		self._IconFrame = nil
+	end
+	local TitleOffset = 12
+	if NewIcon then
+		local IconFrame = MakeIcon(NewIcon, self._Container, UDim2.fromOffset(14, 14), Theme.Accent)
+		if IconFrame then
+			IconFrame.Position = UDim2.fromOffset(12, 10)
+			TitleOffset = 30
+			self._IconFrame = IconFrame
+		end
+	end
+	self._TitleOffset = TitleOffset
+	if self._TitleLabel then
+		self._TitleLabel.Position = UDim2.fromOffset(TitleOffset, 8)
+		self._TitleLabel.Size = UDim2.new(1, -TitleOffset - 12, 0, 18)
+	end
+	return self
+end
+
+function Section:GetIcon()
+	return self._IconStr
+end
+
+function Section:Destroy()
+	if self._Destroyed then return end
+	self._Destroyed = true
+	local OwnerList = nil
+	if self._Panel then OwnerList = self._Panel._Sections
+	elseif self._Tab then OwnerList = self._Tab._Sections end
+	if OwnerList then
+		for i = #OwnerList, 1, -1 do
+			if OwnerList[i] == self then table.remove(OwnerList, i) end
+		end
+	end
+	if self._Container then
+		pcall(function() self._Container:Destroy() end)
+	end
 end
 
 function Panel:AddSection(TitleOrOptions)
@@ -1267,7 +1406,7 @@ function Aurora:CreateWindow(Options)
 		Parent = Topbar,
 	})
 
-	Make("TextLabel", {
+	local WindowTitleLabel = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(14, 0),
 		Size = UDim2.new(1, -60, 1, 0),
@@ -1278,6 +1417,7 @@ function Aurora:CreateWindow(Options)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = Topbar,
 	})
+	Self._TitleLabel = WindowTitleLabel
 
 	local MinBtn = Make("TextButton", {
 		BackgroundColor3 = Theme.SurfaceAlt,
@@ -1430,6 +1570,39 @@ function Window:SetVisible(State)
 	if State then self:Show() else self:Hide() end
 end
 
+function Window:SetTitle(NewTitle)
+	NewTitle = tostring(NewTitle or "")
+	self._Title = NewTitle
+	if self._TitleLabel then self._TitleLabel.Text = NewTitle end
+	if self._Aurora and self._Aurora._RefreshSwitcher then self._Aurora._RefreshSwitcher() end
+	return self
+end
+
+function Window:GetTitle()
+	return self._Title
+end
+
+function Window:Destroy()
+	if self._Destroyed then return end
+	self._Destroyed = true
+	if self._ToggleConn then
+		pcall(function() self._ToggleConn:Disconnect() end)
+		self._ToggleConn = nil
+	end
+	local Owner = self._Aurora
+	if Owner then
+		for i = #Owner._Panels, 1, -1 do
+			if Owner._Panels[i] == self then table.remove(Owner._Panels, i) end
+		end
+		if Owner._Layout then Owner._Layout[self._Key] = nil end
+		SaveLayout()
+	end
+	if self._Wrapper then
+		pcall(function() self._Wrapper:Destroy() end)
+	end
+	if Owner and Owner._RefreshSwitcher then Owner._RefreshSwitcher() end
+end
+
 function Window:ToggleMinimize()
     self:SetMinimized(not self._Minimized)
 end
@@ -1476,16 +1649,18 @@ function Window:AddTab(Options)
 		Size = UDim2.new(1, 0, 0, 32),
 		AutoButtonColor = false,
 		Text = "",
+		LayoutOrder = NextLayoutOrder(self._Sidebar),
 		Parent = self._Sidebar,
 	})
 	Corner(Btn, 6)
 
 	local LabelX = 12
-	if Options.Icon and Icons then
-		local IconFrame = MakeIcon(Options.Icon, Btn, UDim2.fromOffset(14, 14), Theme.TextDim)
-		if IconFrame then
-			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
-			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+	local TabIconFrame = nil
+	if Options.Icon then
+		TabIconFrame = MakeIcon(Options.Icon, Btn, UDim2.fromOffset(14, 14), Theme.TextDim)
+		if TabIconFrame then
+			TabIconFrame.AnchorPoint = Vector2.new(0, 0.5)
+			TabIconFrame.Position = UDim2.new(0, 10, 0.5, 0)
 			LabelX = 30
 		end
 	end
@@ -1522,6 +1697,9 @@ function Window:AddTab(Options)
 	Self._Btn = Btn
 	Self._Label = Label
 	Self._Body = Body
+	Self._IconFrame = TabIconFrame
+	Self._IconStr = Options.Icon
+	Self._LabelX = LabelX
 
 	Btn.MouseButton1Click:Connect(function() self:SelectTab(Self) end)
 	Btn.MouseEnter:Connect(function()
@@ -1549,6 +1727,65 @@ function Window:SelectTab(TargetTab)
 		end
 	end
 	self._ActiveTab = TargetTab
+end
+
+function Tab:SetTitle(NewTitle)
+	NewTitle = tostring(NewTitle or "")
+	self._Title = NewTitle
+	if self._Label then self._Label.Text = NewTitle end
+	return self
+end
+
+function Tab:GetTitle()
+	return self._Title
+end
+
+function Tab:SetIcon(NewIcon)
+	self._IconStr = NewIcon
+	if self._IconFrame then
+		pcall(function() self._IconFrame:Destroy() end)
+		self._IconFrame = nil
+	end
+	local LabelX = 12
+	local IsActive = self._Window and self._Window._ActiveTab == self
+	local IconColor = IsActive and Theme.OnAccent or Theme.TextDim
+	if NewIcon then
+		local IconFrame = MakeIcon(NewIcon, self._Btn, UDim2.fromOffset(14, 14), IconColor)
+		if IconFrame then
+			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+			LabelX = 30
+			self._IconFrame = IconFrame
+		end
+	end
+	self._LabelX = LabelX
+	if self._Label then
+		self._Label.Position = UDim2.fromOffset(LabelX, 0)
+		self._Label.Size = UDim2.new(1, -LabelX - 8, 1, 0)
+	end
+	return self
+end
+
+function Tab:GetIcon()
+	return self._IconStr
+end
+
+function Tab:Destroy()
+	if self._Destroyed then return end
+	self._Destroyed = true
+	local Win = self._Window
+	if Win then
+		for i = #Win._Tabs, 1, -1 do
+			if Win._Tabs[i] == self then table.remove(Win._Tabs, i) end
+		end
+		if Win._ActiveTab == self then
+			Win._ActiveTab = nil
+			local NextTab = Win._Tabs[1]
+			if NextTab then Win:SelectTab(NextTab) end
+		end
+	end
+	if self._Btn then pcall(function() self._Btn:Destroy() end) end
+	if self._Body then pcall(function() self._Body:Destroy() end) end
 end
 
 function Tab:AddSection(TitleOrOptions)
@@ -1625,11 +1862,14 @@ function Section:AddLabel(Options)
 		TextColor3 = Theme.TextDim,
 		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	return {
 		SetText = function(_, NewText) Label.Text = NewText end,
+		GetText = function() return Label.Text end,
 		Instance = Label,
+		Destroy = function() pcall(function() Label:Destroy() end) end,
 	}
 end
 
@@ -1640,6 +1880,7 @@ function Section:AddParagraph(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
@@ -1678,10 +1919,38 @@ function Section:AddParagraph(Options)
 		Parent = Container,
 	})
 
+	local function SetTitle(NewTitle)
+		if NewTitle == nil or NewTitle == "" then
+			if TitleLabel then
+				TitleLabel:Destroy()
+				TitleLabel = nil
+			end
+			return
+		end
+		if TitleLabel then
+			TitleLabel.Text = NewTitle
+		else
+			TitleLabel = Make("TextLabel", {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, 0, 0, 16),
+				FontFace = FontBold,
+				Text = NewTitle,
+				TextColor3 = Theme.Text,
+				TextSize = 12,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				LayoutOrder = 1,
+				Parent = Container,
+			})
+		end
+	end
+
 	return {
 		SetText = function(_, NewText) Body.Text = NewText end,
-		SetTitle = function(_, NewTitle) if TitleLabel then TitleLabel.Text = NewTitle end end,
+		GetText = function() return Body.Text end,
+		SetTitle = function(_, NewTitle) SetTitle(NewTitle) end,
+		GetTitle = function() return TitleLabel and TitleLabel.Text or "" end,
 		Instance = Container,
+		Destroy = function() pcall(function() Container:Destroy() end) end,
 	}
 end
 
@@ -1690,58 +1959,122 @@ function Section:AddDivider()
 		BackgroundColor3 = Theme.BorderSoft,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 1),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
-	return { Instance = Line }
+	return {
+		Instance = Line,
+		Destroy = function() pcall(function() Line:Destroy() end) end,
+	}
 end
 
 function Section:AddButton(Options)
 	Options = Options or {}
+
+	local SubButtonSpecs = {}
+	if typeof(Options.SubButtons) == "table" then
+		for Index, Spec in ipairs(Options.SubButtons) do
+			if Index > 5 then break end
+			table.insert(SubButtonSpecs, Spec)
+		end
+	end
+	local HasSubButtons = #SubButtonSpecs > 0
+
+	local RowHeight = 30
+	local SubSize = 26
+	local SubGap = 4
+	local SubAreaWidth = HasSubButtons and (#SubButtonSpecs * SubSize + (#SubButtonSpecs - 1) * SubGap + SubGap) or 0
+
+	local RowOrder = NextLayoutOrder(self._Content)
+
+	local OuterRow = self._Content
+	local ButtonSize = UDim2.new(1, 0, 0, RowHeight)
+	if HasSubButtons then
+		OuterRow = Make("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, RowHeight),
+			LayoutOrder = RowOrder,
+			Parent = self._Content,
+		})
+		ButtonSize = UDim2.new(1, -SubAreaWidth, 1, 0)
+	end
+
 	local Button = Make("TextButton", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 30),
+		Size = ButtonSize,
 		FontFace = FontMedium,
 		Text = Options.Text or "Button",
 		TextColor3 = Theme.Text,
 		TextSize = 12,
 		AutoButtonColor = false,
 		ClipsDescendants = true,
-		Parent = self._Content,
+		LayoutOrder = (not HasSubButtons) and RowOrder or nil,
+		Parent = OuterRow,
 	})
 	Corner(Button, 6)
 	HookHover(Button, "Elevated", "Accent")
-	local IconFrame
-	if Options.Icon and Icons then
-		IconFrame = MakeIcon(Options.Icon, Button, UDim2.fromOffset(14, 14), Theme.Text)
-	end
-	if IconFrame then
-		IconFrame.Size = UDim2.fromOffset(14, 14)
-		IconFrame.AnchorPoint = Vector2.new(0, 0.5)
-		IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
-		for _, Child in ipairs(IconFrame:GetChildren()) do
-			if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
-				Child.AnchorPoint = Vector2.new(0.5, 0.5)
-				Child.Position = UDim2.fromScale(0.5, 0.5)
-				Child.Size = UDim2.fromScale(1, 1)
+
+	local CurrentText = Options.Text or "Button"
+	local CurrentIcon = nil
+	local IconFrame = nil
+	local BtnLabel = nil
+	local HoverBound = false
+
+	local function ApplyIcon(NewIcon)
+		if IconFrame then
+			pcall(function() IconFrame:Destroy() end)
+			IconFrame = nil
+		end
+		CurrentIcon = NewIcon
+		if NewIcon then
+			IconFrame = MakeIcon(NewIcon, Button, UDim2.fromOffset(14, 14), Theme.Text)
+			if IconFrame then
+				IconFrame.Size = UDim2.fromOffset(14, 14)
+				IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+				IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+				for _, Child in ipairs(IconFrame:GetChildren()) do
+					if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+						Child.AnchorPoint = Vector2.new(0.5, 0.5)
+						Child.Position = UDim2.fromScale(0.5, 0.5)
+						Child.Size = UDim2.fromScale(1, 1)
+					end
+				end
 			end
 		end
-		Button.Text = ""
-		local BtnLabel = Make("TextLabel", {
-			Name = "ButtonLabel",
-			BackgroundTransparency = 1,
-			Position = UDim2.new(0, 30, 0, 0),
-			Size = UDim2.new(1, -40, 1, 0),
-			FontFace = FontMedium,
-			Text = Options.Text or "Button",
-			TextColor3 = Theme.Text,
-			TextSize = 12,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextYAlignment = Enum.TextYAlignment.Center,
-			Parent = Button,
-		})
-		HookHover(Button, "Elevated", "Accent", "BackgroundColor3", BtnLabel)
+		if IconFrame then
+			Button.Text = ""
+			if not BtnLabel then
+				BtnLabel = Make("TextLabel", {
+					Name = "ButtonLabel",
+					BackgroundTransparency = 1,
+					Position = UDim2.new(0, 30, 0, 0),
+					Size = UDim2.new(1, -40, 1, 0),
+					FontFace = FontMedium,
+					Text = CurrentText,
+					TextColor3 = Theme.Text,
+					TextSize = 12,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Center,
+					Parent = Button,
+				})
+			else
+				BtnLabel.Text = CurrentText
+			end
+			if not HoverBound then
+				HookHover(Button, "Elevated", "Accent", "BackgroundColor3", BtnLabel)
+				HoverBound = true
+			end
+		else
+			if BtnLabel then
+				BtnLabel:Destroy()
+				BtnLabel = nil
+			end
+			Button.Text = CurrentText
+		end
 	end
+
+	ApplyIcon(Options.Icon)
 
 	Button.MouseButton1Click:Connect(function()
 		local Ripple = Make("Frame", {
@@ -1759,7 +2092,125 @@ function Section:AddButton(Options)
 		SafeCall(Options.Callback)
 	end)
 
-	return { Instance = Button }
+	local SubButtonHandles = {}
+	if HasSubButtons then
+		local SubRow = Make("Frame", {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.fromOffset(SubAreaWidth - SubGap, RowHeight),
+			Parent = OuterRow,
+		})
+		Make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, SubGap),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Parent = SubRow,
+		})
+
+		for Index, Spec in ipairs(SubButtonSpecs) do
+			Spec = typeof(Spec) == "table" and Spec or {}
+			local SubBtn = Make("TextButton", {
+				BackgroundColor3 = Theme.Elevated,
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(SubSize, SubSize),
+				AutoButtonColor = false,
+				FontFace = FontBold,
+				Text = "",
+				TextColor3 = Theme.Text,
+				TextSize = 11,
+				ClipsDescendants = true,
+				LayoutOrder = Index,
+				Parent = SubRow,
+			})
+			Corner(SubBtn, 6)
+			HookHover(SubBtn, "Elevated", "Accent")
+
+			local SubIconFrame = nil
+			local SubCallback = Spec.Callback
+			local SubText = Spec.Text or ""
+			local SubIcon = Spec.Icon
+
+			local function RenderSub()
+				if SubIconFrame then
+					pcall(function() SubIconFrame:Destroy() end)
+					SubIconFrame = nil
+				end
+				if SubIcon then
+					SubIconFrame = MakeIcon(SubIcon, SubBtn, UDim2.fromOffset(14, 14), Theme.Text)
+				end
+				if SubIconFrame then
+					SubBtn.Text = ""
+					SubIconFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+					SubIconFrame.Position = UDim2.fromScale(0.5, 0.5)
+					for _, Child in ipairs(SubIconFrame:GetChildren()) do
+						if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+							Child.AnchorPoint = Vector2.new(0.5, 0.5)
+							Child.Position = UDim2.fromScale(0.5, 0.5)
+							Child.Size = UDim2.fromScale(1, 1)
+						end
+					end
+				else
+					SubBtn.Text = SubText
+				end
+			end
+			RenderSub()
+
+			SubBtn.MouseButton1Click:Connect(function()
+				local Ripple = Make("Frame", {
+					BackgroundColor3 = Color3.new(1, 1, 1),
+					BackgroundTransparency = 0.7,
+					BorderSizePixel = 0,
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(0.5, 0.5),
+					Size = UDim2.fromOffset(0, 0),
+					Parent = SubBtn,
+				})
+				Corner(Ripple, 100)
+				Tween(Ripple, Spring, { Size = UDim2.fromOffset(SubBtn.AbsoluteSize.X * 2, SubBtn.AbsoluteSize.X * 2), BackgroundTransparency = 1 })
+				task.delay(0.55, function() Ripple:Destroy() end)
+				SafeCall(SubCallback)
+			end)
+
+			local SubHandle = {
+				Instance = SubBtn,
+				SetText = function(_, NewText)
+					SubText = NewText or ""
+					if not SubIcon then RenderSub() end
+				end,
+				GetText = function() return SubText end,
+				SetIcon = function(_, NewIcon)
+					SubIcon = NewIcon
+					RenderSub()
+				end,
+				GetIcon = function() return SubIcon end,
+				SetCallback = function(_, NewCallback) SubCallback = NewCallback end,
+				Destroy = function() pcall(function() SubBtn:Destroy() end) end,
+			}
+			table.insert(SubButtonHandles, SubHandle)
+		end
+	end
+
+	return {
+		Instance = Button,
+		SetText = function(_, NewText)
+			CurrentText = NewText or ""
+			if BtnLabel then BtnLabel.Text = CurrentText else Button.Text = CurrentText end
+		end,
+		GetText = function() return CurrentText end,
+		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
+		GetIcon = function() return CurrentIcon end,
+		SubButtons = SubButtonHandles,
+		GetSubButton = function(_, Index) return SubButtonHandles[Index] end,
+		Destroy = function()
+			if HasSubButtons then
+				pcall(function() OuterRow:Destroy() end)
+			else
+				pcall(function() Button:Destroy() end)
+			end
+		end,
+	}
 end
 
 function Section:AddToggle(Options)
@@ -1771,24 +2222,15 @@ function Section:AddToggle(Options)
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
 
-	local LabelOffset = 10
-	if Options.Icon and Icons then
-		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
-		if IconFrame then
-			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
-			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
-			LabelOffset = 30
-		end
-	end
-
-	Make("TextLabel", {
+	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(LabelOffset, 0),
-		Size = UDim2.new(1, -LabelOffset - 50, 1, 0),
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(1, -60, 1, 0),
 		FontFace = FontMedium,
 		Text = Options.Text or "Toggle",
 		TextColor3 = Theme.Text,
@@ -1796,6 +2238,30 @@ function Section:AddToggle(Options)
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Parent = Row,
 	})
+
+	local IconFrame = nil
+	local CurrentIcon = nil
+
+	local function ApplyIcon(NewIcon)
+		if IconFrame then
+			pcall(function() IconFrame:Destroy() end)
+			IconFrame = nil
+		end
+		CurrentIcon = NewIcon
+		local Offset = 10
+		if NewIcon then
+			IconFrame = MakeIcon(NewIcon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
+			if IconFrame then
+				IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+				IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+				Offset = 30
+			end
+		end
+		Label.Position = UDim2.fromOffset(Offset, 0)
+		Label.Size = UDim2.new(1, -Offset - 50, 1, 0)
+	end
+
+	ApplyIcon(Options.Icon)
 
 	local Switch = Make("Frame", {
 		BackgroundColor3 = Theme.Surface,
@@ -1852,7 +2318,15 @@ function Section:AddToggle(Options)
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
+		SetText = function(_, NewText) Label.Text = NewText end,
+		GetText = function() return Label.Text end,
+		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
+		GetIcon = function() return CurrentIcon end,
 		Instance = Row,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() Row:Destroy() end)
+		end,
 	}
 end
 
@@ -1873,6 +2347,7 @@ function Section:AddSlider(Options)
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 48),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
@@ -1964,12 +2439,12 @@ function Section:AddSlider(Options)
 			UpdateFromInput(Input)
 		end
 	end)
-	UserInputService.InputChanged:Connect(function(Input)
+	local InputChangedConn = UserInputService.InputChanged:Connect(function(Input)
 		if Dragging and (Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch) then
 			UpdateFromInput(Input)
 		end
 	end)
-	UserInputService.InputEnded:Connect(function(Input)
+	local InputEndedConn = UserInputService.InputEnded:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 			Dragging = false
 		end
@@ -1982,7 +2457,15 @@ function Section:AddSlider(Options)
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
+		SetText = function(_, NewText) Title.Text = NewText end,
+		GetText = function() return Title.Text end,
 		Instance = Container,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() InputChangedConn:Disconnect() end)
+			pcall(function() InputEndedConn:Disconnect() end)
+			pcall(function() Container:Destroy() end)
+		end,
 	}
 end
 
@@ -2027,6 +2510,7 @@ function Section:AddDropdown(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
 		ClipsDescendants = false,
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
@@ -2040,7 +2524,7 @@ function Section:AddDropdown(Options)
 		Parent = Container,
 	})
 
-	Make("TextLabel", {
+	local HeaderLabel = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.new(0.5, 0, 1, 0),
@@ -2352,7 +2836,17 @@ function Section:AddDropdown(Options)
 		Set = function(_, V) Set(V) end,
 		Get = function() return Selected end,
 		SetOptions = function(_, O) SetOptions(O) end,
+		SetText = function(_, NewText) HeaderLabel.Text = NewText end,
+		GetText = function() return HeaderLabel.Text end,
 		Instance = Container,
+		Destroy = function()
+			if _ActiveDropdown and _ActiveDropdown.Close == CloseMenu then
+				_ActiveDropdown = nil
+			end
+			UnbindFlag(Aurora, Flag)
+			pcall(function() OverlayMenu:Destroy() end)
+			pcall(function() Container:Destroy() end)
+		end,
 	}
 end
 
@@ -2366,11 +2860,12 @@ function Section:AddKeybind(Options)
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
 
-	Make("TextLabel", {
+	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.new(1, -80, 1, 0),
@@ -2411,7 +2906,7 @@ function Section:AddKeybind(Options)
 		Btn.TextColor3 = Theme.Accent
 	end)
 
-	UserInputService.InputBegan:Connect(function(Input, Processed)
+	local InputConn = UserInputService.InputBegan:Connect(function(Input, Processed)
 		if Listening and Input.UserInputType == Enum.UserInputType.Keyboard then
 			Listening = false
 			Btn.TextColor3 = Theme.Text
@@ -2430,7 +2925,14 @@ function Section:AddKeybind(Options)
 	return {
 		Set = function(_, K) Set(K) end,
 		Get = function() return Key end,
+		SetText = function(_, NewText) Label.Text = NewText end,
+		GetText = function() return Label.Text end,
 		Instance = Row,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() InputConn:Disconnect() end)
+			pcall(function() Row:Destroy() end)
+		end,
 	}
 end
 
@@ -2443,11 +2945,12 @@ function Section:AddTextbox(Options)
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
 
-	Make("TextLabel", {
+	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.new(0.4, 0, 1, 0),
@@ -2506,7 +3009,13 @@ function Section:AddTextbox(Options)
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
+		SetText = function(_, NewText) Label.Text = NewText end,
+		GetText = function() return Label.Text end,
 		Instance = Row,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() Row:Destroy() end)
+		end,
 	}
 end
 
@@ -2522,6 +3031,7 @@ function Section:AddColorPicker(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
 		ClipsDescendants = true,
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
@@ -2533,7 +3043,7 @@ function Section:AddColorPicker(Options)
 		Parent = Container,
 	})
 
-	Make("TextLabel", {
+	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
 		Position = UDim2.fromOffset(10, 0),
 		Size = UDim2.new(1, -50, 1, 0),
@@ -2659,7 +3169,7 @@ function Section:AddColorPicker(Options)
 			Fire(false)
 		end
 	end)
-	UserInputService.InputChanged:Connect(function(Input)
+	local InputChangedConn = UserInputService.InputChanged:Connect(function(Input)
 		if Input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
 		if DraggingSV then
 			local X = math.clamp((Input.Position.X - SV.AbsolutePosition.X) / SV.AbsoluteSize.X, 0, 1)
@@ -2672,7 +3182,7 @@ function Section:AddColorPicker(Options)
 			Fire(false)
 		end
 	end)
-	UserInputService.InputEnded:Connect(function(Input)
+	local InputEndedConn = UserInputService.InputEnded:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 then
 			DraggingSV = false
 			DraggingHue = false
@@ -2711,7 +3221,15 @@ function Section:AddColorPicker(Options)
 	return {
 		Set = function(_, C) Set(C) end,
 		Get = function() return Value end,
+		SetText = function(_, NewText) Label.Text = NewText end,
+		GetText = function() return Label.Text end,
 		Instance = Container,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() InputChangedConn:Disconnect() end)
+			pcall(function() InputEndedConn:Disconnect() end)
+			pcall(function() Container:Destroy() end)
+		end,
 	}
 end
 
@@ -2725,6 +3243,7 @@ function Section:AddProgressBar(Options)
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 44),
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
@@ -2889,8 +3408,19 @@ function Section:AddProgressBar(Options)
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
 		SetColor = function(_, C) SetColor(C) end,
+		GetColor = function() return BarColor end,
 		SetText = function(_, T) SetText(T) end,
+		GetText = function() return Title.Text end,
 		Instance = Container,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			StopSheen()
+			if _CornerTask then
+				pcall(function() _CornerTask:Disconnect() end)
+				_CornerTask = nil
+			end
+			pcall(function() Container:Destroy() end)
+		end,
 	}
 end
 
@@ -2905,6 +3435,7 @@ function Section:AddButtonBind(Options)
 		BorderSizePixel = 0,
 		Size = UDim2.new(1, 0, 0, 32),
 		ClipsDescendants = true,
+		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
@@ -2918,29 +3449,44 @@ function Section:AddButtonBind(Options)
 		Parent = Row,
 	})
 
-	local LabelX = 10
-	if Options.Icon and Icons then
-		local IconFrame = MakeIcon(Options.Icon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
-		if IconFrame then
-			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
-			IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
-			IconFrame.ZIndex = 3
-			LabelX = 30
-		end
-	end
+	local CurrentText = Options.Text or "Action"
+	local CurrentIcon = nil
+	local IconFrame = nil
 
 	local BtnLabel = Make("TextLabel", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(LabelX, 0),
-		Size = UDim2.new(1, -84 - LabelX, 1, 0),
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(1, -94, 1, 0),
 		FontFace = FontMedium,
-		Text = Options.Text or "Action",
+		Text = CurrentText,
 		TextColor3 = Theme.Text,
 		TextSize = 12,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		ZIndex = 3,
 		Parent = Row,
 	})
+
+	local function ApplyIcon(NewIcon)
+		if IconFrame then
+			pcall(function() IconFrame:Destroy() end)
+			IconFrame = nil
+		end
+		CurrentIcon = NewIcon
+		local LabelX = 10
+		if NewIcon then
+			IconFrame = MakeIcon(NewIcon, Row, UDim2.fromOffset(14, 14), Theme.TextDim)
+			if IconFrame then
+				IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+				IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+				IconFrame.ZIndex = 3
+				LabelX = 30
+			end
+		end
+		BtnLabel.Position = UDim2.fromOffset(LabelX, 0)
+		BtnLabel.Size = UDim2.new(1, -84 - LabelX, 1, 0)
+	end
+
+	ApplyIcon(Options.Icon)
 
 	Make("Frame", {
 		BackgroundColor3 = Theme.BorderSoft,
@@ -3021,7 +3567,7 @@ function Section:AddButtonBind(Options)
 		KeyBtn.TextColor3 = Theme.Accent
 	end)
 
-	UserInputService.InputBegan:Connect(function(Input, Processed)
+	local InputConn = UserInputService.InputBegan:Connect(function(Input, Processed)
 		if Listening and Input.UserInputType == Enum.UserInputType.Keyboard then
 			Listening = false
 			KeyBtn.TextColor3 = Theme.Text
@@ -3040,7 +3586,19 @@ function Section:AddButtonBind(Options)
 	return {
 		SetKey = function(_, K) SetKey(K) end,
 		GetKey = function() return Key end,
+		SetText = function(_, NewText)
+			CurrentText = NewText or ""
+			BtnLabel.Text = CurrentText
+		end,
+		GetText = function() return CurrentText end,
+		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
+		GetIcon = function() return CurrentIcon end,
 		Instance = Row,
+		Destroy = function()
+			UnbindFlag(Aurora, Flag)
+			pcall(function() InputConn:Disconnect() end)
+			pcall(function() Row:Destroy() end)
+		end,
 	}
 end
 
@@ -3112,7 +3670,7 @@ function Aurora:Notify(Options)
 	})
 
 	local TitleX = 0
-	if Options.Icon and Icons then
+	if Options.Icon then
 		local IconFrame = MakeIcon(Options.Icon, TitleRow, UDim2.fromOffset(14, 14), AccentColor)
 		if IconFrame then
 			IconFrame.AnchorPoint = Vector2.new(0, 0.5)
@@ -3178,11 +3736,25 @@ function Aurora:Notify(Options)
 	Tween(Wrap, Spring, { Position = UDim2.fromOffset(0, 0), GroupTransparency = 0 })
 	Tween(Bar, TweenInfo.new(Duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) })
 
-	task.delay(Duration, function()
+	local Dismissed = false
+	local DismissTask
+
+	local function Dismiss()
+		if Dismissed then return end
+		Dismissed = true
+		if DismissTask then pcall(task.cancel, DismissTask) end
 		Tween(Wrap, SpringFast, { Position = UDim2.fromOffset(Width + 40, 0), GroupTransparency = 1 })
-		task.wait(0.3)
-		pcall(function() Wrap:Destroy() end)
-	end)
+		task.delay(0.3, function()
+			pcall(function() Wrap:Destroy() end)
+		end)
+	end
+
+	DismissTask = task.delay(Duration, Dismiss)
+
+	return {
+		Instance = Wrap,
+		Destroy = function() Dismiss() end,
+	}
 end
 
 function Aurora:SaveConfig()
