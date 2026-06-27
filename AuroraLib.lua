@@ -1446,6 +1446,18 @@ end
 
 function Window:SetToggleKey(NewKey)
 	self._ToggleKey = NewKey
+	if not self._ToggleConn then
+		local Self = self
+		self._ToggleConn = UserInputService.InputBegan:Connect(function(Input, Processed)
+			if Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			if UserInputService:GetFocusedTextBox() then return end
+			if Input.KeyCode == Self._ToggleKey then
+				Self:ToggleVisible()
+				return
+			end
+			if Processed then return end
+		end)
+	end
 end
 
 function Window:AddTab(Options)
