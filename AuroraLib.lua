@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
+local TextService = game:GetService("TextService")
 
 local FontId = "rbxassetid://12187365364"
 local HasFontNew = typeof(Font) == "table" or typeof(Font) == "userdata"
@@ -518,7 +519,7 @@ Aurora.__index = Aurora
 Aurora.Flags = {}
 Aurora.Theme = Theme
 Aurora.Themes = Themes
-Aurora.Version = "4.0.0"
+Aurora.Version = "4.2.1"
 
 Aurora._Initialized = false
 Aurora._Panels = {}
@@ -1796,6 +1797,151 @@ function Tab:AddSection(TitleOrOptions)
 	return Self
 end
 
+local function ApplyAdaptiveSize(Container, Mode)
+	if not Mode or Mode == "None" then return end
+	if Mode == "Height" or Mode == "Both" then
+		Container.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	if Mode == "Width" or Mode == "Both" then
+		Container.AutomaticSize = Enum.AutomaticSize.X
+	end
+	if Mode == "Height" then
+		Container.AutomaticSize = Enum.AutomaticSize.Y
+	end
+end
+
+local function ResolveAdaptiveSize(Options)
+	local Raw = Options.AdaptiveSize
+	if Raw == nil then return "Height" end
+	if Raw == false or Raw == "None" then return "None" end
+	if Raw == true then return "Height" end
+	if typeof(Raw) == "string" then
+		local Upper = Raw:upper()
+		if Upper == "WIDTH" then return "Width" end
+		if Upper == "BOTH" then return "Both" end
+		if Upper == "HEIGHT" then return "Height" end
+		if Upper == "NONE" then return "None" end
+	end
+	return "Height"
+end
+
+local function ResolveDropdownAdaptive(Options)
+	if tonumber(Options.Width) then return false end
+	local Raw = Options.AdaptiveSize
+	if Raw == nil then return true end
+	if Raw == false or Raw == "None" then return false end
+	if Raw == true or Raw == "Width" or Raw == "Both" then return true end
+	if typeof(Raw) == "string" then
+		local Upper = Raw:upper()
+		if Upper == "NONE" then return false end
+		return true
+	end
+	return true
+end
+
+local function MeasureTextWidth(Text, Size)
+	local Ok, Result = pcall(function()
+		return TextService:GetTextSize(Text or "", Size or 12, Enum.Font.GothamMedium, Vector2.new(2000, 100))
+	end)
+	if Ok and Result then return Result.X end
+	return (#(Text or "")) * ((Size or 12) * 0.56)
+end
+
+local function CreateLockOverlay(Parent, Radius)
+	local Overlay = Make("Frame", {
+		Name = "LockOverlay",
+		BackgroundColor3 = Color3.fromRGB(8, 8, 11),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Active = true,
+		Selectable = false,
+		ZIndex = 50,
+		Size = UDim2.fromScale(1, 1),
+		Visible = false,
+		Parent = Parent,
+	})
+	if Radius then Corner(Overlay, Radius) end
+
+	local Content = Make("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 51,
+		Parent = Overlay,
+	})
+	Make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 3),
+		Parent = Content,
+	})
+
+	local IconHolder = nil
+	local TextLabel = Make("TextLabel", {
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.XY,
+		Text = "",
+		FontFace = FontMedium,
+		TextColor3 = Color3.fromRGB(235, 235, 240),
+		TextSize = 11,
+		Visible = false,
+		ZIndex = 51,
+		Parent = Content,
+	})
+
+	local function Render(TextOrOptions)
+		local Opts = TextOrOptions
+		if Opts == nil then Opts = {} end
+		if typeof(Opts) == "string" then Opts = { Text = Opts } end
+
+		if IconHolder then
+			pcall(function() IconHolder:Destroy() end)
+			IconHolder = nil
+		end
+
+		local IconValue = Opts.Icon
+		if IconValue == nil then IconValue = "lock" end
+		if IconValue then
+			IconHolder = MakeIcon(IconValue, Content, UDim2.fromOffset(16, 16), Color3.fromRGB(235, 235, 240))
+			if IconHolder then IconHolder.LayoutOrder = 1 end
+		end
+
+		if Opts.Text and Opts.Text ~= "" then
+			TextLabel.Text = Opts.Text
+			TextLabel.Visible = true
+			TextLabel.LayoutOrder = 2
+		else
+			TextLabel.Visible = false
+		end
+	end
+
+	local FadeOutTask = nil
+
+	local function Show(TextOrOptions)
+		if FadeOutTask then
+			pcall(task.cancel, FadeOutTask)
+			FadeOutTask = nil
+		end
+		Render(TextOrOptions)
+		Overlay.Visible = true
+		Tween(Overlay, SpringFast, { BackgroundTransparency = 0.4 })
+	end
+
+	local function Hide()
+		Tween(Overlay, SpringFast, { BackgroundTransparency = 1 })
+		FadeOutTask = task.delay(0.3, function()
+			FadeOutTask = nil
+			Overlay.Visible = false
+		end)
+	end
+
+	return {
+		Show = Show,
+		Hide = Hide,
+		Instance = Overlay,
+	}
+end
+
 local function HookHover(Object, NormalKey, HoverKey, Property, TextObj)
 	Property = Property or "BackgroundColor3"
 	if typeof(NormalKey) ~= "string" then NormalKey = ReverseLookupThemeKey(NormalKey) or "Elevated" end
@@ -1865,10 +2011,23 @@ function Section:AddLabel(Options)
 		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
 	})
+
+	local Locked = false
+	local LockOverlay = CreateLockOverlay(Label, nil)
+
 	return {
 		SetText = function(_, NewText) Label.Text = NewText end,
 		GetText = function() return Label.Text end,
 		Instance = Label,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function() pcall(function() Label:Destroy() end) end,
 	}
 end
@@ -1944,12 +2103,24 @@ function Section:AddParagraph(Options)
 		end
 	end
 
+	local Locked = false
+	local LockOverlay = CreateLockOverlay(Container, 6)
+
 	return {
 		SetText = function(_, NewText) Body.Text = NewText end,
 		GetText = function() return Body.Text end,
 		SetTitle = function(_, NewTitle) SetTitle(NewTitle) end,
 		GetTitle = function() return TitleLabel and TitleLabel.Text or "" end,
 		Instance = Container,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function() pcall(function() Container:Destroy() end) end,
 	}
 end
@@ -1971,6 +2142,8 @@ end
 function Section:AddButton(Options)
 	Options = Options or {}
 
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
+
 	local SubButtonSpecs = {}
 	if typeof(Options.SubButtons) == "table" then
 		for Index, Spec in ipairs(Options.SubButtons) do
@@ -1988,7 +2161,7 @@ function Section:AddButton(Options)
 	local RowOrder = NextLayoutOrder(self._Content)
 
 	local OuterRow = self._Content
-	local ButtonSize = UDim2.new(1, 0, 0, RowHeight)
+	local ButtonSize = AdaptiveMode == "None" and UDim2.new(1, 0, 0, RowHeight) or UDim2.new(1, 0, 0, RowHeight)
 	if HasSubButtons then
 		OuterRow = Make("Frame", {
 			BackgroundTransparency = 1,
@@ -1996,6 +2169,7 @@ function Section:AddButton(Options)
 			LayoutOrder = RowOrder,
 			Parent = self._Content,
 		})
+		ApplyAdaptiveSize(OuterRow, AdaptiveMode)
 		ButtonSize = UDim2.new(1, -SubAreaWidth, 1, 0)
 	end
 
@@ -2014,12 +2188,16 @@ function Section:AddButton(Options)
 	})
 	Corner(Button, 6)
 	HookHover(Button, "Elevated", "Accent")
+	if not HasSubButtons then
+		ApplyAdaptiveSize(Button, AdaptiveMode)
+	end
 
 	local CurrentText = Options.Text or "Button"
 	local CurrentIcon = nil
 	local IconFrame = nil
 	local BtnLabel = nil
 	local HoverBound = false
+	local Locked = false
 
 	local function ApplyIcon(NewIcon)
 		if IconFrame then
@@ -2077,6 +2255,7 @@ function Section:AddButton(Options)
 	ApplyIcon(Options.Icon)
 
 	Button.MouseButton1Click:Connect(function()
+		if Locked then return end
 		local Ripple = Make("Frame", {
 			BackgroundColor3 = Color3.new(1, 1, 1),
 			BackgroundTransparency = 0.7,
@@ -2158,6 +2337,7 @@ function Section:AddButton(Options)
 			RenderSub()
 
 			SubBtn.MouseButton1Click:Connect(function()
+				if Locked then return end
 				local Ripple = Make("Frame", {
 					BackgroundColor3 = Color3.new(1, 1, 1),
 					BackgroundTransparency = 0.7,
@@ -2192,6 +2372,8 @@ function Section:AddButton(Options)
 		end
 	end
 
+	local LockOverlay = CreateLockOverlay(HasSubButtons and OuterRow or Button, 6)
+
 	return {
 		Instance = Button,
 		SetText = function(_, NewText)
@@ -2203,6 +2385,15 @@ function Section:AddButton(Options)
 		GetIcon = function() return CurrentIcon end,
 		SubButtons = SubButtonHandles,
 		GetSubButton = function(_, Index) return SubButtonHandles[Index] end,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			if HasSubButtons then
 				pcall(function() OuterRow:Destroy() end)
@@ -2213,10 +2404,264 @@ function Section:AddButton(Options)
 	}
 end
 
+function Section:AddBadge(Options)
+	Options = Options or {}
+
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
+
+	local SubButtonSpecs = {}
+	if typeof(Options.SubButtons) == "table" then
+		for Index, Spec in ipairs(Options.SubButtons) do
+			if Index > 5 then break end
+			table.insert(SubButtonSpecs, Spec)
+		end
+	end
+	local HasSubButtons = #SubButtonSpecs > 0
+
+	local RowHeight = 30
+	local SubSize = 26
+	local SubGap = 4
+	local SubAreaWidth = HasSubButtons and (#SubButtonSpecs * SubSize + (#SubButtonSpecs - 1) * SubGap + SubGap) or 0
+
+	local RowOrder = NextLayoutOrder(self._Content)
+
+	local OuterRow = self._Content
+	local BadgeSize = UDim2.new(1, 0, 0, RowHeight)
+	if HasSubButtons then
+		OuterRow = Make("Frame", {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, RowHeight),
+			LayoutOrder = RowOrder,
+			Parent = self._Content,
+		})
+		ApplyAdaptiveSize(OuterRow, AdaptiveMode)
+		BadgeSize = UDim2.new(1, -SubAreaWidth, 1, 0)
+	end
+
+	local Badge = Make("Frame", {
+		BackgroundColor3 = Theme.Elevated,
+		BorderSizePixel = 0,
+		Size = BadgeSize,
+		LayoutOrder = (not HasSubButtons) and RowOrder or nil,
+		Parent = OuterRow,
+	})
+	Corner(Badge, 6)
+	if not HasSubButtons then
+		ApplyAdaptiveSize(Badge, AdaptiveMode)
+	end
+
+	local CurrentText = Options.Text or ""
+	local CurrentIcon = nil
+	local IconFrame = nil
+	local BtnLabel = nil
+
+	local function ApplyIcon(NewIcon)
+		if IconFrame then
+			pcall(function() IconFrame:Destroy() end)
+			IconFrame = nil
+		end
+		CurrentIcon = NewIcon
+		local LabelX = 10
+		if NewIcon then
+			IconFrame = MakeIcon(NewIcon, Badge, UDim2.fromOffset(14, 14), Theme.Text)
+			if IconFrame then
+				IconFrame.Size = UDim2.fromOffset(14, 14)
+				IconFrame.AnchorPoint = Vector2.new(0, 0.5)
+				IconFrame.Position = UDim2.new(0, 10, 0.5, 0)
+				for _, Child in ipairs(IconFrame:GetChildren()) do
+					if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+						Child.AnchorPoint = Vector2.new(0.5, 0.5)
+						Child.Position = UDim2.fromScale(0.5, 0.5)
+						Child.Size = UDim2.fromScale(1, 1)
+					end
+				end
+				LabelX = 30
+			end
+		end
+		if IconFrame then
+			if not BtnLabel then
+				BtnLabel = Make("TextLabel", {
+					Name = "BadgeLabel",
+					BackgroundTransparency = 1,
+					Position = UDim2.new(0, LabelX, 0, 0),
+					Size = UDim2.new(1, -LabelX - 10, 1, 0),
+					FontFace = FontMedium,
+					Text = CurrentText,
+					TextColor3 = Theme.Text,
+					TextSize = 12,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Center,
+					TextWrapped = AdaptiveMode ~= "None",
+					Parent = Badge,
+				})
+			else
+				BtnLabel.Text = CurrentText
+				BtnLabel.Position = UDim2.new(0, LabelX, 0, 0)
+				BtnLabel.Size = UDim2.new(1, -LabelX - 10, 1, 0)
+			end
+		else
+			if BtnLabel then
+				BtnLabel:Destroy()
+				BtnLabel = nil
+			end
+			local Existing = Badge:FindFirstChild("BadgeText")
+			if Existing then Existing.Text = CurrentText return end
+			local T = Make("TextLabel", {
+				Name = "BadgeText",
+				BackgroundTransparency = 1,
+				Position = UDim2.fromOffset(10, 0),
+				Size = UDim2.new(1, -20, 1, 0),
+				FontFace = FontMedium,
+				Text = CurrentText,
+				TextColor3 = Theme.Text,
+				TextSize = 12,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextWrapped = AdaptiveMode ~= "None",
+				Parent = Badge,
+			})
+		end
+	end
+
+	ApplyIcon(Options.Icon)
+
+	local SubButtonHandles = {}
+	if HasSubButtons then
+		local SubRow = Make("Frame", {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.fromOffset(SubAreaWidth - SubGap, RowHeight),
+			Parent = OuterRow,
+		})
+		Make("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, SubGap),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Parent = SubRow,
+		})
+
+		for Index, Spec in ipairs(SubButtonSpecs) do
+			Spec = typeof(Spec) == "table" and Spec or {}
+			local SubBtn = Make("TextButton", {
+				BackgroundColor3 = Theme.Elevated,
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(SubSize, SubSize),
+				AutoButtonColor = false,
+				FontFace = FontBold,
+				Text = "",
+				TextColor3 = Theme.Text,
+				TextSize = 11,
+				ClipsDescendants = true,
+				LayoutOrder = Index,
+				Parent = SubRow,
+			})
+			Corner(SubBtn, 6)
+			HookHover(SubBtn, "Elevated", "Accent")
+
+			local SubIconFrame = nil
+			local SubCallback = Spec.Callback
+			local SubText = Spec.Text or ""
+			local SubIcon = Spec.Icon
+
+			local function RenderSub()
+				if SubIconFrame then
+					pcall(function() SubIconFrame:Destroy() end)
+					SubIconFrame = nil
+				end
+				if SubIcon then
+					SubIconFrame = MakeIcon(SubIcon, SubBtn, UDim2.fromOffset(14, 14), Theme.Text)
+				end
+				if SubIconFrame then
+					SubBtn.Text = ""
+					SubIconFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+					SubIconFrame.Position = UDim2.fromScale(0.5, 0.5)
+					for _, Child in ipairs(SubIconFrame:GetChildren()) do
+						if Child:IsA("ImageLabel") or Child:IsA("ImageButton") then
+							Child.AnchorPoint = Vector2.new(0.5, 0.5)
+							Child.Position = UDim2.fromScale(0.5, 0.5)
+							Child.Size = UDim2.fromScale(1, 1)
+						end
+					end
+				else
+					SubBtn.Text = SubText
+				end
+			end
+			RenderSub()
+
+			local SubLocked = false
+			SubBtn.MouseButton1Click:Connect(function()
+				if SubLocked then return end
+				local Ripple = Make("Frame", {
+					BackgroundColor3 = Color3.new(1, 1, 1),
+					BackgroundTransparency = 0.7,
+					BorderSizePixel = 0,
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Position = UDim2.fromScale(0.5, 0.5),
+					Size = UDim2.fromOffset(0, 0),
+					Parent = SubBtn,
+				})
+				Corner(Ripple, 100)
+				Tween(Ripple, Spring, { Size = UDim2.fromOffset(SubBtn.AbsoluteSize.X * 2, SubBtn.AbsoluteSize.X * 2), BackgroundTransparency = 1 })
+				task.delay(0.55, function() Ripple:Destroy() end)
+				SafeCall(SubCallback)
+			end)
+
+			table.insert(SubButtonHandles, {
+				Instance = SubBtn,
+				SetText = function(_, NewText) SubText = NewText or "" if not SubIcon then RenderSub() end end,
+				GetText = function() return SubText end,
+				SetIcon = function(_, NewIcon) SubIcon = NewIcon RenderSub() end,
+				GetIcon = function() return SubIcon end,
+				SetCallback = function(_, Cb) SubCallback = Cb end,
+				Lock = function(_) SubLocked = true end,
+				Unlock = function(_) SubLocked = false end,
+				IsLocked = function() return SubLocked end,
+				Destroy = function() pcall(function() SubBtn:Destroy() end) end,
+			})
+		end
+	end
+
+	local Locked = false
+	local LockOverlay = CreateLockOverlay(HasSubButtons and OuterRow or Badge, 6)
+
+	return {
+		Instance = Badge,
+		SetText = function(_, NewText)
+			CurrentText = NewText or ""
+			local T = Badge:FindFirstChild("BadgeText")
+			if T then T.Text = CurrentText end
+			if BtnLabel then BtnLabel.Text = CurrentText end
+		end,
+		GetText = function() return CurrentText end,
+		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
+		GetIcon = function() return CurrentIcon end,
+		SubButtons = SubButtonHandles,
+		GetSubButton = function(_, Index) return SubButtonHandles[Index] end,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
+		Destroy = function()
+			if HasSubButtons then
+				pcall(function() OuterRow:Destroy() end)
+			else
+				pcall(function() Badge:Destroy() end)
+			end
+		end,
+	}
+end
+
 function Section:AddToggle(Options)
 	Options = Options or {}
 	local Value = Options.Default == true
 	local Flag = Options.Flag
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
 
 	local Row = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
@@ -2226,6 +2671,7 @@ function Section:AddToggle(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
+	ApplyAdaptiveSize(Row, AdaptiveMode)
 
 	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
@@ -2308,12 +2754,18 @@ function Section:AddToggle(Options)
 		if not FromLoad then SafeCall(Options.Callback, Value) end
 	end
 
-	Click.MouseButton1Click:Connect(function() Set(not Value) end)
+	local Locked = false
+	Click.MouseButton1Click:Connect(function()
+		if Locked then return end
+		Set(not Value)
+	end)
 
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
 
 	SafeCall(Options.Callback, Value)
+
+	local LockOverlay = CreateLockOverlay(Row, 6)
 
 	return {
 		Set = function(_, V) Set(V) end,
@@ -2323,6 +2775,15 @@ function Section:AddToggle(Options)
 		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
 		GetIcon = function() return CurrentIcon end,
 		Instance = Row,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() Row:Destroy() end)
@@ -2337,6 +2798,7 @@ function Section:AddSlider(Options)
 	local Decimals = Options.Decimals or 0
 	local Value = math.clamp(Options.Default or Min, Min, Max)
 	local Flag = Options.Flag
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
 
 	local function Round(N)
 		local Mult = 10 ^ Decimals
@@ -2351,6 +2813,7 @@ function Section:AddSlider(Options)
 		Parent = self._Content,
 	})
 	Corner(Container, 6)
+	ApplyAdaptiveSize(Container, AdaptiveMode)
 
 	local Title = Make("TextLabel", {
 		BackgroundTransparency = 1,
@@ -2428,12 +2891,14 @@ function Section:AddSlider(Options)
 	end
 
 	local Dragging = false
+	local Locked = false
 	local function UpdateFromInput(Input)
 		local Alpha = math.clamp((Input.Position.X - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
 		Set(Min + (Max - Min) * Alpha)
 	end
 
 	Track.InputBegan:Connect(function(Input)
+		if Locked then return end
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
 			Dragging = true
 			UpdateFromInput(Input)
@@ -2454,12 +2919,24 @@ function Section:AddSlider(Options)
 	BindFlag(Aurora, Flag, Value, Set)
 	SafeCall(Options.Callback, Value)
 
+	local LockOverlay = CreateLockOverlay(Container, 6)
+
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
 		SetText = function(_, NewText) Title.Text = NewText end,
 		GetText = function() return Title.Text end,
 		Instance = Container,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			Dragging = false
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() InputChangedConn:Disconnect() end)
@@ -2478,11 +2955,22 @@ local function _CloseActiveDropdown()
 	end
 end
 
+local function _PointInGui(Pos, Gui)
+	if not Gui or not Gui.Parent then return false end
+	local Ok, AP, AS = pcall(function() return Gui.AbsolutePosition, Gui.AbsoluteSize end)
+	if not Ok then return false end
+	return Pos.X >= AP.X and Pos.X <= AP.X + AS.X and Pos.Y >= AP.Y and Pos.Y <= AP.Y + AS.Y
+end
+
 local _DropdownDismissConn = nil
 local function _EnsureDropdownDismiss()
 	if _DropdownDismissConn then return end
 	_DropdownDismissConn = UserInputService.InputBegan:Connect(function(Input)
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+			local Active = _ActiveDropdown
+			if Active and (_PointInGui(Input.Position, Active.Header) or _PointInGui(Input.Position, Active.Menu)) then
+				return
+			end
 			task.defer(_CloseActiveDropdown)
 		end
 	end)
@@ -2505,10 +2993,15 @@ function Section:AddDropdown(Options)
 
 	_EnsureDropdownDismiss()
 
+	local Locked = false
+
+	local AdaptiveOn = ResolveDropdownAdaptive(Options)
+	local FixedWidth = tonumber(Options.Width)
+
 	local Container = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1, 0, 0, 32),
+		Size = FixedWidth and UDim2.new(0, FixedWidth, 0, 32) or UDim2.new(1, 0, 0, 32),
 		ClipsDescendants = false,
 		LayoutOrder = NextLayoutOrder(self._Content),
 		Parent = self._Content,
@@ -2590,6 +3083,38 @@ function Section:AddDropdown(Options)
 			ZIndex = 2,
 			Parent = Header,
 		})
+	end
+
+	local MinDropdownWidth = 140
+	local MaxDropdownWidth = 420
+
+	local function RecalcDropdownWidth()
+		if not AdaptiveOn then return end
+
+		local LeftPad, TitleGap, ValueGap, RightPad, ArrowW = 10, 14, 8, 10, 16
+
+		local TitleW = MeasureTextWidth(HeaderLabel.Text, 12)
+		local ValueW = MeasureTextWidth(ValueLabel.Text, 12)
+		local HeaderContentW = LeftPad + TitleW + TitleGap + ValueW + ValueGap + ArrowW + RightPad
+
+		local WidestItemW = 0
+		for _, Name in ipairs(Items) do
+			local W = MeasureTextWidth(tostring(Name), 12)
+			if W > WidestItemW then WidestItemW = W end
+		end
+		local ItemContentW = WidestItemW + 24
+
+		local TargetW = math.clamp(math.max(HeaderContentW, ItemContentW), MinDropdownWidth, MaxDropdownWidth)
+		Container.Size = UDim2.new(0, TargetW, 0, 32)
+
+		local AvailableForValue = math.max(20, TargetW - LeftPad - TitleW - TitleGap - ArrowW - ValueGap - RightPad)
+
+		HeaderLabel.Position = UDim2.fromOffset(LeftPad, 0)
+		HeaderLabel.Size = UDim2.fromOffset(math.min(TitleW, TargetW - LeftPad - RightPad), 32)
+
+		ValueLabel.AnchorPoint = Vector2.new(1, 0.5)
+		ValueLabel.Position = UDim2.new(1, -(ArrowW + ValueGap), 0.5, 0)
+		ValueLabel.Size = UDim2.fromOffset(AvailableForValue, 20)
 	end
 
 	local OverlayMenu = Make("Frame", {
@@ -2691,6 +3216,7 @@ function Section:AddDropdown(Options)
 			end
 		end
 		ValueLabel.Text = DisplayText()
+		RecalcDropdownWidth()
 	end
 
 	local function CloseMenu()
@@ -2781,26 +3307,16 @@ function Section:AddDropdown(Options)
 		Tween(Arrow, Spring, { Rotation = 180 })
 		Tween(OverlayMenu, Spring, { Size = UDim2.fromOffset(MenuW, TargetH) })
 
-		_ActiveDropdown = { Close = CloseMenu }
+		_ActiveDropdown = { Close = CloseMenu, Header = Header, Menu = OverlayMenu }
 	end
 
 	Header.MouseButton1Click:Connect(function()
+		if Locked then return end
 		if Open then
 			CloseMenu()
 			_ActiveDropdown = nil
 		else
 			OpenMenu()
-		end
-	end)
-
-	Header.InputBegan:Connect(function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-
-		end
-	end)
-	OverlayMenu.InputBegan:Connect(function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
-
 		end
 	end)
 
@@ -2832,13 +3348,30 @@ function Section:AddDropdown(Options)
 	BindFlag(Aurora, Flag, Selected, Set)
 	SafeCall(Options.Callback, Selected)
 
+	local LockOverlay = CreateLockOverlay(Container, 6)
+
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Selected end,
 		SetOptions = function(_, O) SetOptions(O) end,
-		SetText = function(_, NewText) HeaderLabel.Text = NewText end,
+		SetText = function(_, NewText) HeaderLabel.Text = NewText RecalcDropdownWidth() end,
 		GetText = function() return HeaderLabel.Text end,
 		Instance = Container,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			if Open then
+				CloseMenu()
+				if _ActiveDropdown and _ActiveDropdown.Close == CloseMenu then
+					_ActiveDropdown = nil
+				end
+			end
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			if _ActiveDropdown and _ActiveDropdown.Close == CloseMenu then
 				_ActiveDropdown = nil
@@ -2855,6 +3388,7 @@ function Section:AddKeybind(Options)
 	local Key = Options.Default or Enum.KeyCode.E
 	local Flag = Options.Flag
 	local Listening = false
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
 
 	local Row = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
@@ -2864,6 +3398,7 @@ function Section:AddKeybind(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
+	ApplyAdaptiveSize(Row, AdaptiveMode)
 
 	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
@@ -2900,7 +3435,10 @@ function Section:AddKeybind(Options)
 		if not FromLoad then SafeCall(Options.Changed, Key) end
 	end
 
+	local Locked = false
+
 	Btn.MouseButton1Click:Connect(function()
+		if Locked then return end
 		Listening = true
 		Btn.Text = "..."
 		Btn.TextColor3 = Theme.Accent
@@ -2922,12 +3460,28 @@ function Section:AddKeybind(Options)
 
 	BindFlag(Aurora, Flag, Key, Set)
 
+	local LockOverlay = CreateLockOverlay(Row, 6)
+
 	return {
 		Set = function(_, K) Set(K) end,
 		Get = function() return Key end,
 		SetText = function(_, NewText) Label.Text = NewText end,
 		GetText = function() return Label.Text end,
 		Instance = Row,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			if Listening then
+				Listening = false
+				Btn.TextColor3 = Theme.Text
+				Btn.Text = Key.Name
+			end
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() InputConn:Disconnect() end)
@@ -2940,6 +3494,7 @@ function Section:AddTextbox(Options)
 	Options = Options or {}
 	local Flag = Options.Flag
 	local Value = Options.Default or ""
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
 
 	local Row = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
@@ -2949,6 +3504,7 @@ function Section:AddTextbox(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
+	ApplyAdaptiveSize(Row, AdaptiveMode)
 
 	local Label = Make("TextLabel", {
 		BackgroundTransparency = 1,
@@ -3006,12 +3562,27 @@ function Section:AddTextbox(Options)
 	BindFlag(Aurora, Flag, Value, Set)
 	SafeCall(Options.Callback, Value, false)
 
+	local LockOverlay = CreateLockOverlay(Row, 6)
+	local Locked = false
+
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
 		SetText = function(_, NewText) Label.Text = NewText end,
 		GetText = function() return Label.Text end,
 		Instance = Row,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			Box.TextEditable = false
+			pcall(function() Box:ReleaseFocus() end)
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			Box.TextEditable = true
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() Row:Destroy() end)
@@ -3025,6 +3596,7 @@ function Section:AddColorPicker(Options)
 	local Value = Options.Default or Color3.fromRGB(255, 255, 255)
 	local H, S, V = Color3.toHSV(Value)
 	local Open = false
+	local Locked = false
 
 	local Container = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
@@ -3154,6 +3726,7 @@ function Section:AddColorPicker(Options)
 	local DraggingSV, DraggingHue = false, false
 
 	SV.InputBegan:Connect(function(Input)
+		if Locked then return end
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 then
 			DraggingSV = true
 			local X = math.clamp((Input.Position.X - SV.AbsolutePosition.X) / SV.AbsoluteSize.X, 0, 1)
@@ -3163,6 +3736,7 @@ function Section:AddColorPicker(Options)
 		end
 	end)
 	HueBar.InputBegan:Connect(function(Input)
+		if Locked then return end
 		if Input.UserInputType == Enum.UserInputType.MouseButton1 then
 			DraggingHue = true
 			H = math.clamp((Input.Position.X - HueBar.AbsolutePosition.X) / HueBar.AbsoluteSize.X, 0, 1)
@@ -3205,6 +3779,7 @@ function Section:AddColorPicker(Options)
 	end)
 
 	Header.MouseButton1Click:Connect(function()
+		if Locked then return end
 		Open = not Open
 		Tween(Container, Spring, { Size = UDim2.new(1, 0, 0, Open and 178 or 32) })
 	end)
@@ -3218,12 +3793,32 @@ function Section:AddColorPicker(Options)
 	Render()
 	BindFlag(Aurora, Flag, Value, Set)
 
+	local LockOverlay = CreateLockOverlay(Container, 6)
+
 	return {
 		Set = function(_, C) Set(C) end,
 		Get = function() return Value end,
 		SetText = function(_, NewText) Label.Text = NewText end,
 		GetText = function() return Label.Text end,
 		Instance = Container,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			DraggingSV = false
+			DraggingHue = false
+			HexBox.TextEditable = false
+			pcall(function() HexBox:ReleaseFocus() end)
+			if Open then
+				Open = false
+				Tween(Container, Spring, { Size = UDim2.new(1, 0, 0, 32) })
+			end
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			HexBox.TextEditable = true
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() InputChangedConn:Disconnect() end)
@@ -3404,6 +3999,9 @@ function Section:AddProgressBar(Options)
 	Render(false)
 	BindFlag(Aurora, Flag, Value, Set)
 
+	local Locked = false
+	local LockOverlay = CreateLockOverlay(Container, 6)
+
 	return {
 		Set = function(_, V) Set(V) end,
 		Get = function() return Value end,
@@ -3412,6 +4010,15 @@ function Section:AddProgressBar(Options)
 		SetText = function(_, T) SetText(T) end,
 		GetText = function() return Title.Text end,
 		Instance = Container,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			StopSheen()
@@ -3429,6 +4036,8 @@ function Section:AddButtonBind(Options)
 	local Key = Options.Default or Enum.KeyCode.E
 	local Flag = Options.Flag
 	local Listening = false
+	local Locked = false
+	local AdaptiveMode = ResolveAdaptiveSize(Options)
 
 	local Row = Make("Frame", {
 		BackgroundColor3 = Theme.Elevated,
@@ -3439,6 +4048,7 @@ function Section:AddButtonBind(Options)
 		Parent = self._Content,
 	})
 	Corner(Row, 6)
+	ApplyAdaptiveSize(Row, AdaptiveMode)
 
 	local BtnRegion = Make("TextButton", {
 		BackgroundTransparency = 1,
@@ -3535,6 +4145,7 @@ function Section:AddButtonBind(Options)
 	end)
 
 	BtnRegion.MouseButton1Click:Connect(function()
+		if Locked then return end
 		local Ripple = Make("Frame", {
 			BackgroundColor3 = Color3.new(1, 1, 1),
 			BackgroundTransparency = 0.7,
@@ -3561,6 +4172,7 @@ function Section:AddButtonBind(Options)
 	end
 
 	KeyBtn.MouseButton1Click:Connect(function()
+		if Locked then return end
 		if Listening then return end
 		Listening = true
 		KeyBtn.Text = "..."
@@ -3583,6 +4195,8 @@ function Section:AddButtonBind(Options)
 
 	BindFlag(Aurora, Flag, Key, SetKey)
 
+	local LockOverlay = CreateLockOverlay(Row, 6)
+
 	return {
 		SetKey = function(_, K) SetKey(K) end,
 		GetKey = function() return Key end,
@@ -3594,6 +4208,20 @@ function Section:AddButtonBind(Options)
 		SetIcon = function(_, NewIcon) ApplyIcon(NewIcon) end,
 		GetIcon = function() return CurrentIcon end,
 		Instance = Row,
+		Lock = function(_, TextOrOptions)
+			Locked = true
+			if Listening then
+				Listening = false
+				KeyBtn.TextColor3 = Theme.Text
+				KeyBtn.Text = Key.Name
+			end
+			LockOverlay.Show(TextOrOptions)
+		end,
+		Unlock = function(_)
+			Locked = false
+			LockOverlay.Hide()
+		end,
+		IsLocked = function() return Locked end,
 		Destroy = function()
 			UnbindFlag(Aurora, Flag)
 			pcall(function() InputConn:Disconnect() end)
