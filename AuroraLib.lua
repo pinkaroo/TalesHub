@@ -519,7 +519,7 @@ Aurora.__index = Aurora
 Aurora.Flags = {}
 Aurora.Theme = Theme
 Aurora.Themes = Themes
-Aurora.Version = "4.2.1"
+Aurora.Version = "4.2.3"
 
 Aurora._Initialized = false
 Aurora._Panels = {}
@@ -588,18 +588,44 @@ local function MakeDraggable(Frame, Handle, Panel)
 end
 
 local function _UpdatePanelAutoHeight(Self)
+	if not Self._AdaptiveSize then return end
 	if Self._Minimized or Self._Hidden then return end
 	if not Self._Body or not Self._Wrapper then return end
 
-	local ContentH = Self._Body.AbsoluteCanvasSize.Y
+	local ScreenH = 900
+	pcall(function() ScreenH = Self._Aurora._Screen.AbsoluteSize.Y end)
+	local MaxH = math.max(160, math.floor(ScreenH * 0.85))
 
-	local TotalH = math.min(38 + ContentH + 22, Self._MaxAutoHeight)
+	local ContentH = Self._Body.AbsoluteCanvasSize.Y
+	if ContentH <= 0 then
+		pcall(function()
+			ContentH = Self._BodyListLayout.AbsoluteContentSize.Y
+		end)
+	end
+
+	local TotalH = math.min(38 + ContentH + 22, MaxH)
 	TotalH = math.max(TotalH, Self._MinHeight + 10)
 
 	local CurrentW = Self._Wrapper.Size.X.Offset
 	local NewSize = UDim2.fromOffset(CurrentW, TotalH)
 	Self._FullSize = NewSize
 	Tween(Self._Wrapper, SpringFast, { Size = NewSize })
+end
+
+local function _PollPanelHeight(Self)
+	if not Self._AdaptiveSize then return end
+	if Self._HeightPollActive then return end
+	Self._HeightPollActive = true
+	local Ticks = 0
+	local Conn
+	Conn = RunService.Heartbeat:Connect(function()
+		Ticks = Ticks + 1
+		_UpdatePanelAutoHeight(Self)
+		if Ticks >= 8 then
+			Conn:Disconnect()
+			Self._HeightPollActive = false
+		end
+	end)
 end
 
 function Aurora:Init(Options)
@@ -877,7 +903,7 @@ function Aurora:CreatePanel(Options)
 	Self._Minimized = false
 	Self._Hidden = false
 	Self._Sections = {}
-	Self._MaxAutoHeight = Self._DefaultSize.Y.Offset
+	Self._AdaptiveSize = Options.AdaptiveSize ~= false
 
 	local Saved = self._Layout[Self._Key]
 	if typeof(Saved) == "table" then
@@ -1062,13 +1088,17 @@ function Aurora:CreatePanel(Options)
 		Parent = BodyWrap,
 	})
 	Padding(Body, 10, 12, 12, 12)
-	ListLayout(Body, 8)
+	local BodyListLayout = ListLayout(Body, 8)
 
 	Self._Body = Body
 	Self._BodyWrap = BodyWrap
 	Self._Topbar = Topbar
+	Self._BodyListLayout = BodyListLayout
 
 	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+		_UpdatePanelAutoHeight(Self)
+	end)
+	BodyListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		_UpdatePanelAutoHeight(Self)
 	end)
 
@@ -1095,6 +1125,11 @@ function Aurora:CreatePanel(Options)
 
 	table.insert(self._Panels, Self)
 	if self._RefreshSwitcher then self._RefreshSwitcher() end
+
+	if Self._AdaptiveSize then
+		_PollPanelHeight(Self)
+	end
+
 	return Self
 end
 
@@ -1122,7 +1157,7 @@ function Panel:SetMinimized(State)
 		Tween(self._Wrapper, Spring, { Size = UDim2.fromOffset(self._FullSize.X.Offset, self._MinHeight) })
 		Tween(self._BodyWrap, Spring, { GroupTransparency = 1 })
 	else
-		Tween(self._Wrapper, Spring, { Size = self._FullSize })
+		_PollPanelHeight(self)
 		Tween(self._BodyWrap, Spring, { GroupTransparency = 0 })
 	end
 	if self._MinIcon then
@@ -1168,7 +1203,7 @@ function Panel:Show()
 	if self._Minimized then
 		Tween(self._Wrapper, Spring, { Size = UDim2.fromOffset(self._FullSize.X.Offset, self._MinHeight) })
 	else
-		Tween(self._Wrapper, Spring, { Size = self._FullSize })
+		_PollPanelHeight(self)
 	end
 	self:_PersistLayout()
 end
@@ -1312,6 +1347,7 @@ function Section:Destroy()
 	if self._Destroyed then return end
 	self._Destroyed = true
 	local OwnerList = nil
+	local OwnerPanel = self._Panel
 	if self._Panel then OwnerList = self._Panel._Sections
 	elseif self._Tab then OwnerList = self._Tab._Sections end
 	if OwnerList then
@@ -1322,6 +1358,9 @@ function Section:Destroy()
 	if self._Container then
 		pcall(function() self._Container:Destroy() end)
 	end
+	if OwnerPanel then
+		_PollPanelHeight(OwnerPanel)
+	end
 end
 
 function Panel:AddSection(TitleOrOptions)
@@ -1329,6 +1368,7 @@ function Panel:AddSection(TitleOrOptions)
 	Self._Panel = self
 	Self._Aurora = self._Aurora
 	table.insert(self._Sections, Self)
+	_PollPanelHeight(self)
 	return Self
 end
 
@@ -1812,7 +1852,7 @@ end
 
 local function ResolveAdaptiveSize(Options)
 	local Raw = Options.AdaptiveSize
-	if Raw == nil then return "Height" end
+	if Raw == nil then return "None" end
 	if Raw == false or Raw == "None" then return "None" end
 	if Raw == true then return "Height" end
 	if typeof(Raw) == "string" then
@@ -1822,7 +1862,7 @@ local function ResolveAdaptiveSize(Options)
 		if Upper == "HEIGHT" then return "Height" end
 		if Upper == "NONE" then return "None" end
 	end
-	return "Height"
+	return "None"
 end
 
 local function ResolveDropdownAdaptive(Options)
