@@ -519,7 +519,7 @@ Aurora.__index = Aurora
 Aurora.Flags = {}
 Aurora.Theme = Theme
 Aurora.Themes = Themes
-Aurora.Version = "4.2.3"
+Aurora.Version = "4.2.4"
 
 Aurora._Initialized = false
 Aurora._Panels = {}
@@ -590,20 +590,18 @@ end
 local function _UpdatePanelAutoHeight(Self)
 	if not Self._AdaptiveSize then return end
 	if Self._Minimized or Self._Hidden then return end
-	if not Self._Body or not Self._Wrapper then return end
+	if not Self._Body or not Self._Wrapper or not Self._BodyListLayout then return end
 
 	local ScreenH = 900
 	pcall(function() ScreenH = Self._Aurora._Screen.AbsoluteSize.Y end)
 	local MaxH = math.max(160, math.floor(ScreenH * 0.85))
 
-	local ContentH = Self._Body.AbsoluteCanvasSize.Y
-	if ContentH <= 0 then
-		pcall(function()
-			ContentH = Self._BodyListLayout.AbsoluteContentSize.Y
-		end)
-	end
+	local ContentH = 0
+	pcall(function() ContentH = Self._BodyListLayout.AbsoluteContentSize.Y end)
 
-	local TotalH = math.min(38 + ContentH + 22, MaxH)
+	-- Body has Padding(Body, 10, 12, 12, 12) = top 10 + bottom 12 = 22px vertical
+	-- Topbar = 38px, add a small 4px breathing room
+	local TotalH = math.min(38 + 22 + ContentH + 4, MaxH)
 	TotalH = math.max(TotalH, Self._MinHeight + 10)
 
 	local CurrentW = Self._Wrapper.Size.X.Offset
@@ -614,14 +612,21 @@ end
 
 local function _PollPanelHeight(Self)
 	if not Self._AdaptiveSize then return end
-	if Self._HeightPollActive then return end
+	if Self._HeightPollActive then
+		Self._HeightPollReset = true
+		return
+	end
 	Self._HeightPollActive = true
 	local Ticks = 0
 	local Conn
 	Conn = RunService.Heartbeat:Connect(function()
+		if Self._HeightPollReset then
+			Ticks = 0
+			Self._HeightPollReset = false
+		end
 		Ticks = Ticks + 1
 		_UpdatePanelAutoHeight(Self)
-		if Ticks >= 8 then
+		if Ticks >= 12 then
 			Conn:Disconnect()
 			Self._HeightPollActive = false
 		end
@@ -1095,9 +1100,7 @@ function Aurora:CreatePanel(Options)
 	Self._Topbar = Topbar
 	Self._BodyListLayout = BodyListLayout
 
-	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
-		_UpdatePanelAutoHeight(Self)
-	end)
+	Body:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function() end) -- keep canvas synced
 	BodyListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		_UpdatePanelAutoHeight(Self)
 	end)
@@ -1371,7 +1374,6 @@ function Panel:AddSection(TitleOrOptions)
 	_PollPanelHeight(self)
 	return Self
 end
-
 local Window = {}
 Window.__index = Window
 
@@ -1868,14 +1870,8 @@ end
 local function ResolveDropdownAdaptive(Options)
 	if tonumber(Options.Width) then return false end
 	local Raw = Options.AdaptiveSize
-	if Raw == nil then return true end
+	if Raw == nil then return false end
 	if Raw == false or Raw == "None" then return false end
-	if Raw == true or Raw == "Width" or Raw == "Both" then return true end
-	if typeof(Raw) == "string" then
-		local Upper = Raw:upper()
-		if Upper == "NONE" then return false end
-		return true
-	end
 	return true
 end
 
@@ -3128,33 +3124,40 @@ function Section:AddDropdown(Options)
 	local MinDropdownWidth = 140
 	local MaxDropdownWidth = 420
 
+	local _RecalcPending = false
 	local function RecalcDropdownWidth()
 		if not AdaptiveOn then return end
+		if _RecalcPending then return end
+		_RecalcPending = true
+		task.defer(function()
+			_RecalcPending = false
+			if not Container.Parent then return end
 
-		local LeftPad, TitleGap, ValueGap, RightPad, ArrowW = 10, 14, 8, 10, 16
+			local LeftPad, TitleGap, ValueGap, RightPad, ArrowW = 10, 14, 8, 10, 16
 
-		local TitleW = MeasureTextWidth(HeaderLabel.Text, 12)
-		local ValueW = MeasureTextWidth(ValueLabel.Text, 12)
-		local HeaderContentW = LeftPad + TitleW + TitleGap + ValueW + ValueGap + ArrowW + RightPad
+			local TitleW = MeasureTextWidth(HeaderLabel.Text, 12)
+			local ValueW = MeasureTextWidth(ValueLabel.Text, 12)
+			local HeaderContentW = LeftPad + TitleW + TitleGap + ValueW + ValueGap + ArrowW + RightPad
 
-		local WidestItemW = 0
-		for _, Name in ipairs(Items) do
-			local W = MeasureTextWidth(tostring(Name), 12)
-			if W > WidestItemW then WidestItemW = W end
-		end
-		local ItemContentW = WidestItemW + 24
+			local WidestItemW = 0
+			for _, Name in ipairs(Items) do
+				local W = MeasureTextWidth(tostring(Name), 12)
+				if W > WidestItemW then WidestItemW = W end
+			end
+			local ItemContentW = WidestItemW + 24
 
-		local TargetW = math.clamp(math.max(HeaderContentW, ItemContentW), MinDropdownWidth, MaxDropdownWidth)
-		Container.Size = UDim2.new(0, TargetW, 0, 32)
+			local TargetW = math.clamp(math.max(HeaderContentW, ItemContentW), MinDropdownWidth, MaxDropdownWidth)
+			Container.Size = UDim2.new(0, TargetW, 0, 32)
 
-		local AvailableForValue = math.max(20, TargetW - LeftPad - TitleW - TitleGap - ArrowW - ValueGap - RightPad)
+			local AvailableForValue = math.max(20, TargetW - LeftPad - TitleW - TitleGap - ArrowW - ValueGap - RightPad)
 
-		HeaderLabel.Position = UDim2.fromOffset(LeftPad, 0)
-		HeaderLabel.Size = UDim2.fromOffset(math.min(TitleW, TargetW - LeftPad - RightPad), 32)
+			HeaderLabel.Position = UDim2.fromOffset(LeftPad, 0)
+			HeaderLabel.Size = UDim2.fromOffset(math.min(TitleW, TargetW - LeftPad - RightPad), 32)
 
-		ValueLabel.AnchorPoint = Vector2.new(1, 0.5)
-		ValueLabel.Position = UDim2.new(1, -(ArrowW + ValueGap), 0.5, 0)
-		ValueLabel.Size = UDim2.fromOffset(AvailableForValue, 20)
+			ValueLabel.AnchorPoint = Vector2.new(1, 0.5)
+			ValueLabel.Position = UDim2.new(1, -(ArrowW + ValueGap), 0.5, 0)
+			ValueLabel.Size = UDim2.fromOffset(AvailableForValue, 20)
+		end)
 	end
 
 	local OverlayMenu = Make("Frame", {
